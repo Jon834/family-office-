@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="es" class="wa-theme-default">
 <head>
   <meta charset="utf-8">
@@ -15,6 +15,13 @@
   <script src="./app.js" defer></script>
 </head>
 <body>
+  <div id="updateBanner" class="update-banner" hidden>
+    <span>Hay una nueva versión de la aplicación disponible.</span>
+    <div class="update-actions">
+      <wa-button id="dismissUpdateBtn" appearance="plain">Más tarde</wa-button>
+      <wa-button id="updateBtn" variant="brand">Actualizar aplicación</wa-button>
+    </div>
+  </div>
   <header class="topbar">
     <div class="brand">
       <div class="brand-mark">FO</div>
@@ -22,17 +29,16 @@
     </div>
     <div class="top-actions">
       <wa-button id="themeBtn" appearance="plain" aria-label="Cambiar tema"><wa-icon name="moon"></wa-icon></wa-button>
+      <wa-button id="undoImportBtn" appearance="outlined" hidden><wa-icon slot="start" name="rotate-left"></wa-icon>Deshacer importación</wa-button>
       <wa-button id="importBtn" variant="brand"><wa-icon slot="start" name="file-import"></wa-icon>Importar DivvyDiary</wa-button>
     </div>
   </header>
-
   <nav class="nav-tabs" aria-label="Secciones">
     <button class="nav-item active" data-view="dashboard"><wa-icon name="chart-line"></wa-icon>Resumen</button>
     <button class="nav-item" data-view="portfolio"><wa-icon name="briefcase"></wa-icon>Cartera</button>
     <button class="nav-item" data-view="history"><wa-icon name="clock-rotate-left"></wa-icon>Histórico</button>
     <button class="nav-item" data-view="settings"><wa-icon name="gear"></wa-icon>Datos</button>
   </nav>
-
   <main class="app-shell">
     <section id="dashboard" class="view active">
       <div class="hero">
@@ -44,60 +50,65 @@
         <article class="kpi"><span>Coste invertido</span><strong id="kpiCost">0 €</strong><small id="kpiGain">Plusvalía: 0 €</small></article>
         <article class="kpi"><span>Dividendos anuales</span><strong id="kpiDividends">0 €</strong><small id="kpiYield">Yield: 0 %</small></article>
         <article class="kpi"><span>Yield on cost</span><strong id="kpiYoc">0 %</strong><small id="kpiMonthly">Media mensual: 0 €</small></article>
+        <article class="kpi secondary"><span>Patrimonio neto</span><strong id="netWorthValue">0 €</strong><small id="netWorthMeta">Configura un objetivo de patrimonio neto.</small></article>
+        <article class="kpi secondary"><span>Liquidez</span><strong id="liquidityValue">0 €</strong><small id="liquidityMeta">Otros activos: 0 €</small></article>
+        <article class="kpi secondary"><span>Deuda total</span><strong id="debtValue">0 €</strong><small id="debtMeta">Sin cierre mensual todavía.</small></article>
+        <article class="kpi secondary"><span>Progreso dividendos</span><strong id="goalValue">—</strong><small id="goalMeta">Configura un objetivo anual de dividendos.</small></article>
       </div>
       <div class="dashboard-grid">
         <wa-card class="panel"><div class="panel-head"><div><h2>Distribución por sector</h2><p>Valor de mercado</p></div></div><div id="sectorChart" class="bar-chart empty-state">Sin datos</div></wa-card>
         <wa-card class="panel"><div class="panel-head"><div><h2>Distribución por país</h2><p>Principales exposiciones</p></div></div><div id="countryChart" class="bar-chart empty-state">Sin datos</div></wa-card>
       </div>
+      <div class="dashboard-grid">
+        <wa-card class="panel"><div class="panel-head"><div><h2>Último cierre</h2><p>Evolución mensual</p></div></div><div class="summary-stack"><strong id="latestSnapshot">Todavía no hay cierres mensuales.</strong><small id="snapshotDelta">Necesitas al menos dos cierres para ver variaciones.</small></div></wa-card>
+        <wa-card class="panel"><div class="panel-head"><div><h2>Copias automáticas</h2><p>Previas a importaciones</p></div></div><div class="summary-stack"><strong id="backupStatus">Todavía no se ha generado ninguna copia automática previa a importación.</strong><small>Siempre puedes exportar una copia JSON completa desde la pestaña Datos.</small></div></wa-card>
+      </div>
       <wa-card class="panel"><div class="panel-head"><div><h2>Principales posiciones</h2><p>Por peso actual en cartera</p></div><wa-button appearance="plain" data-go="portfolio">Ver cartera completa</wa-button></div><div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Valor</th><th>Peso</th><th>Dividendo anual</th><th>Yield</th></tr></thead><tbody id="topPositions"><tr><td colspan="5" class="empty-cell">Todavía no hay posiciones.</td></tr></tbody></table></div></wa-card>
     </section>
-
     <section id="portfolio" class="view">
-      <div class="section-head"><div><p class="eyebrow">CARTERA</p><h1>Posiciones de DivvyDiary</h1><p>La sincronización usa el ISIN y conserva el histórico mensual.</p></div><wa-button id="portfolioImportBtn" variant="brand"><wa-icon slot="start" name="file-import"></wa-icon>Importar CSV</wa-button></div>
-      <wa-card class="panel controls"><wa-input id="searchInput" label="Buscar" placeholder="Empresa, ticker o ISIN" clearable></wa-input><wa-select id="sectorFilter" label="Sector"><wa-option value="">Todos</wa-option></wa-select><wa-select id="countryFilter" label="País"><wa-option value="">Todos</wa-option></wa-select></wa-card>
-      <wa-card class="panel"><div class="table-wrap"><table class="portfolio-table"><thead><tr><th>Empresa</th><th>Cantidad</th><th>Precio medio</th><th>Precio</th><th>Valor</th><th>Ganancia</th><th>Peso</th><th>Div. anual</th><th>Yield</th><th>YOC</th><th>Próximo pago</th></tr></thead><tbody id="portfolioRows"><tr><td colspan="11" class="empty-cell">Importa un CSV de DivvyDiary.</td></tr></tbody></table></div></wa-card>
+      <div class="section-head"><div><p class="eyebrow">CARTERA</p><h1>Posiciones de DivvyDiary</h1><p>La sincronización usa el ISIN, conserva notas y permite editar cada posición.</p></div><wa-button id="portfolioImportBtn" variant="brand"><wa-icon slot="start" name="file-import"></wa-icon>Importar CSV</wa-button></div>
+      <wa-card class="panel controls controls-wide"><wa-input id="searchInput" label="Buscar" placeholder="Empresa, ticker o ISIN" clearable></wa-input><wa-select id="sectorFilter" label="Sector"><wa-option value="">Todos</wa-option></wa-select><wa-select id="countryFilter" label="País"><wa-option value="">Todos</wa-option></wa-select><wa-select id="currencyFilter" label="Divisa"><wa-option value="">Todas</wa-option></wa-select><wa-select id="statusFilter" label="Estado" value="active"><wa-option value="active">Activas</wa-option><wa-option value="watch">Seguimiento</wa-option><wa-option value="archived">Archivadas</wa-option><wa-option value="all">Todas</wa-option></wa-select></wa-card>
+      <wa-card class="panel"><div class="table-wrap"><table class="portfolio-table"><thead><tr><th>Empresa</th><th>Cantidad</th><th>Precio medio</th><th>Precio</th><th>Valor</th><th>Ganancia</th><th>Peso</th><th>Div. anual</th><th>Yield</th><th>YOC</th><th>Próximo pago</th><th></th></tr></thead><tbody id="portfolioRows"><tr><td colspan="12" class="empty-cell">Importa un CSV de DivvyDiary.</td></tr></tbody></table></div></wa-card>
     </section>
-
     <section id="history" class="view">
-      <div class="section-head"><div><p class="eyebrow">HISTÓRICO</p><h1>Cierres mensuales</h1><p>Cada cierre guarda una fotografía de los indicadores principales.</p></div><wa-button id="historySnapshotBtn" variant="brand"><wa-icon slot="start" name="camera"></wa-icon>Guardar cierre</wa-button></div>
+      <div class="section-head"><div><p class="eyebrow">HISTÓRICO</p><h1>Cierres mensuales</h1><p>Cada cierre guarda cartera, liquidez, otros activos, deuda y patrimonio neto.</p></div><wa-button id="historySnapshotBtn" variant="brand"><wa-icon slot="start" name="camera"></wa-icon>Guardar cierre</wa-button></div>
       <wa-card class="panel"><div id="historyChart" class="history-chart empty-state">Sin cierres mensuales</div></wa-card>
-      <wa-card class="panel"><div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Coste</th><th>Plusvalía</th><th>Dividendos previstos</th><th>Posiciones</th><th></th></tr></thead><tbody id="historyRows"><tr><td colspan="7" class="empty-cell">No hay cierres guardados.</td></tr></tbody></table></div></wa-card>
+      <wa-card class="panel"><div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Cartera</th><th>Patrimonio neto</th><th>Liquidez</th><th>Deuda</th><th>Dividendos</th><th>Posiciones</th><th></th></tr></thead><tbody id="historyRows"><tr><td colspan="8" class="empty-cell">No hay cierres guardados.</td></tr></tbody></table></div></wa-card>
     </section>
-
     <section id="settings" class="view">
-      <div class="section-head"><div><p class="eyebrow">DATOS Y PRIVACIDAD</p><h1>Copias e informes</h1><p>La información permanece en este navegador. GitHub Pages no recibe tus datos.</p></div></div>
+      <div class="section-head"><div><p class="eyebrow">DATOS Y PRIVACIDAD</p><h1>Copias, patrimonio y objetivos</h1><p>La información permanece en este navegador. GitHub Pages no recibe tus datos.</p></div></div>
       <div class="settings-grid">
-        <wa-card class="action-card"><wa-icon name="file-export"></wa-icon><h2>Exportar copia JSON</h2><p>Guarda cartera, cierres mensuales y configuración.</p><wa-button id="exportJsonBtn" appearance="outlined">Descargar copia</wa-button></wa-card>
+        <wa-card class="action-card"><wa-icon name="rotate-left"></wa-icon><h2>Deshacer última importación</h2><p id="undoHelpText">No hay ninguna importación reciente para revertir.</p><wa-button id="undoImportSettingsBtn" appearance="outlined" disabled>Deshacer importación</wa-button></wa-card>
+        <wa-card class="action-card"><wa-icon name="file-export"></wa-icon><h2>Exportar copia JSON</h2><p>Guarda cartera, cierres mensuales, activos, deudas y configuración.</p><wa-button id="exportJsonBtn" appearance="outlined">Descargar copia</wa-button></wa-card>
         <wa-card class="action-card"><wa-icon name="file-import"></wa-icon><h2>Restaurar copia JSON</h2><p>Recupera los datos en este u otro dispositivo.</p><wa-button id="restoreJsonBtn" appearance="outlined">Seleccionar archivo</wa-button></wa-card>
-        <wa-card class="action-card"><wa-icon name="robot"></wa-icon><h2>Informe para ChatGPT</h2><p>Genera un Markdown con la cartera y su distribución.</p><wa-button id="markdownBtn" variant="brand">Descargar informe</wa-button></wa-card>
-        <wa-card class="action-card danger-card"><wa-icon name="trash"></wa-icon><h2>Borrar datos locales</h2><p>Elimina definitivamente la información de este navegador.</p><wa-button id="clearBtn" variant="danger" appearance="outlined">Borrar todo</wa-button></wa-card>
+        <wa-card class="action-card"><wa-icon name="robot"></wa-icon><h2>Informe para ChatGPT</h2><p>Genera un Markdown con cartera, patrimonio adicional, deuda y objetivos.</p><wa-button id="markdownBtn" variant="brand">Descargar informe</wa-button></wa-card>
       </div>
+      <div class="settings-grid settings-grid-late">
+        <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Activos adicionales</h2><p>Liquidez, monetarios, letras, inmuebles u otros activos.</p></div></div><form id="assetForm" class="stack-form"><div class="inline-form"><wa-input id="assetName" label="Nombre"></wa-input><wa-select id="assetType" label="Tipo" value="cash"><wa-option value="cash">Efectivo</wa-option><wa-option value="money-market">Fondo monetario</wa-option><wa-option value="treasury">Letras del Tesoro</wa-option><wa-option value="property">Inmueble</wa-option><wa-option value="other">Otro</wa-option></wa-select><wa-input id="assetValue" label="Valor (€)" inputmode="decimal"></wa-input></div><wa-textarea id="assetNotes" label="Notas" rows="2"></wa-textarea><wa-button type="submit" variant="brand">Añadir activo</wa-button></form><div class="table-wrap"><table><thead><tr><th>Nombre</th><th>Tipo</th><th>Valor</th><th>Notas</th><th></th></tr></thead><tbody id="assetRows"><tr><td colspan="5" class="empty-cell">No hay activos adicionales.</td></tr></tbody></table></div></wa-card>
+        <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Deudas</h2><p>Hipotecas, préstamos u otras obligaciones.</p></div></div><form id="liabilityForm" class="stack-form"><div class="inline-form"><wa-input id="liabilityName" label="Nombre"></wa-input><wa-select id="liabilityType" label="Tipo" value="mortgage"><wa-option value="mortgage">Hipoteca</wa-option><wa-option value="loan">Préstamo</wa-option><wa-option value="other">Otra</wa-option></wa-select><wa-input id="liabilityValue" label="Saldo (€)" inputmode="decimal"></wa-input></div><wa-textarea id="liabilityNotes" label="Notas" rows="2"></wa-textarea><wa-button type="submit" variant="brand">Añadir deuda</wa-button></form><div class="table-wrap"><table><thead><tr><th>Nombre</th><th>Tipo</th><th>Saldo</th><th>Notas</th><th></th></tr></thead><tbody id="liabilityRows"><tr><td colspan="5" class="empty-cell">No hay deudas registradas.</td></tr></tbody></table></div></wa-card>
+      </div>
+      <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Objetivos financieros</h2><p>Se usan para progreso de dividendos y patrimonio neto en el dashboard.</p></div></div><form id="settingsForm" class="inline-form four-cols"><wa-input id="monthlyExpenseInput" label="Gasto mensual (€)" inputmode="decimal"></wa-input><wa-input id="targetDividendInput" label="Objetivo dividendos (€)" inputmode="decimal"></wa-input><wa-input id="targetNetWorthInput" label="Objetivo patrimonio (€)" inputmode="decimal"></wa-input><wa-input id="monthlyContributionInput" label="Aportación mensual (€)" inputmode="decimal"></wa-input><div class="full-width"><wa-button type="submit" variant="brand">Guardar objetivos</wa-button></div></form></wa-card>
+      <wa-card class="action-card danger-card"><wa-icon name="trash"></wa-icon><h2>Borrar datos locales</h2><p>Elimina definitivamente la información de este navegador.</p><wa-button id="clearBtn" variant="danger" appearance="outlined">Borrar todo</wa-button></wa-card>
     </section>
   </main>
-
   <input id="csvFile" type="file" accept=".csv,text/csv" hidden>
   <input id="jsonFile" type="file" accept=".json,application/json" hidden>
-
   <wa-dialog id="importDialog" label="Importar cartera de DivvyDiary" light-dismiss>
-    <div id="importStepSelect">
-      <div class="drop-zone" id="dropZone"><wa-icon name="cloud-arrow-up"></wa-icon><h3>Selecciona el CSV exportado por DivvyDiary</h3><p>Formato compatible: separador punto y coma y decimales con coma.</p><wa-button id="chooseCsvBtn" variant="brand">Elegir archivo</wa-button></div>
-    </div>
+    <div id="importStepSelect"><div class="drop-zone" id="dropZone"><wa-icon name="cloud-arrow-up"></wa-icon><h3>Selecciona el CSV exportado por DivvyDiary</h3><p>Formato compatible: separador punto y coma y decimales con coma.</p><wa-button id="chooseCsvBtn" variant="brand">Elegir archivo</wa-button></div></div>
     <div id="importStepPreview" hidden>
       <wa-callout variant="brand"><strong id="importFilename"></strong><br><span id="importSummary"></span></wa-callout>
-      <div class="preview-kpis"><div><span>Posiciones</span><strong id="previewCount">0</strong></div><div><span>Valor total</span><strong id="previewValue">0 €</strong></div><div><span>Dividendos</span><strong id="previewDividends">0 €</strong></div></div>
-      <div class="change-grid"><span class="change-new" id="previewNew">0 nuevas</span><span class="change-update" id="previewUpdated">0 actualizadas</span><span class="change-remove" id="previewRemoved">0 ausentes</span></div>
+      <div class="preview-kpis"><div><span>Posiciones</span><strong id="previewCount">0</strong></div><div><span>Valor total</span><strong id="previewValue">0 €</strong></div><div><span>Coste total</span><strong id="previewCost">0 €</strong></div><div><span>Plusvalía</span><strong id="previewGain">0 €</strong></div><div><span>Dividendos</span><strong id="previewDividends">0 €</strong></div></div>
+      <div class="change-grid"><span class="change-new" id="previewNew">0 nuevas</span><span class="change-update" id="previewUpdated">0 actualizadas</span><span class="change-remove" id="previewRemoved">0 ausentes</span><span class="change-error" id="previewErrors">0 incidencias</span></div>
+      <wa-callout id="importWarnings" variant="warning" hidden></wa-callout>
       <wa-radio-group id="importMode" label="Modo de importación" value="update"><wa-radio value="update">Actualizar y conservar posiciones ausentes</wa-radio><wa-radio value="replace">Reemplazar la cartera por el CSV</wa-radio></wa-radio-group>
+      <div class="preview-grid"><section class="preview-panel"><h3>Nuevas</h3><ul id="previewNewList" class="preview-list"><li>Sin cambios</li></ul></section><section class="preview-panel"><h3>Actualizadas</h3><ul id="previewUpdatedList" class="preview-list"><li>Sin cambios</li></ul></section><section class="preview-panel"><h3>Ausentes en el CSV</h3><ul id="previewRemovedList" class="preview-list"><li>Sin cambios</li></ul></section></div>
+      <section class="preview-panel preview-panel-full"><h3>Incidencias detectadas</h3><ul id="previewIssueList" class="preview-list"><li>Sin incidencias</li></ul></section>
     </div>
     <wa-button slot="footer" id="cancelImportBtn" appearance="plain">Cancelar</wa-button>
     <wa-button slot="footer" id="confirmImportBtn" variant="brand" hidden>Confirmar importación</wa-button>
   </wa-dialog>
-
-  <wa-dialog id="confirmDialog" label="Confirmación">
-    <p id="confirmText"></p>
-    <wa-button slot="footer" id="confirmCancel" appearance="plain">Cancelar</wa-button>
-    <wa-button slot="footer" id="confirmOk" variant="danger">Confirmar</wa-button>
-  </wa-dialog>
-
+  <wa-dialog id="positionDialog" label="Detalle de la posición"><div class="stack-form"><h3 id="positionDialogTitle">Posición</h3><p id="positionSummary" class="muted-copy"></p><wa-textarea id="positionNotes" label="Notas personales" rows="3"></wa-textarea><wa-textarea id="positionThesis" label="Tesis de inversión" rows="4"></wa-textarea><div class="inline-form"><wa-input id="positionTargetPrice" label="Precio objetivo" inputmode="decimal"></wa-input><wa-select id="positionStatus" label="Estado"><wa-option value="active">Activa</wa-option><wa-option value="watch">Seguimiento</wa-option><wa-option value="archived">Archivada</wa-option></wa-select></div></div><wa-button slot="footer" id="positionCancelBtn" appearance="plain">Cancelar</wa-button><wa-button slot="footer" id="positionSaveBtn" variant="brand">Guardar cambios</wa-button></wa-dialog>
+  <wa-dialog id="confirmDialog" label="Confirmación"><p id="confirmText"></p><wa-button slot="footer" id="confirmCancel" appearance="plain">Cancelar</wa-button><wa-button slot="footer" id="confirmOk" variant="danger">Confirmar</wa-button></wa-dialog>
   <div id="notice" class="notice" role="status" aria-live="polite"></div>
 </body>
 </html>
