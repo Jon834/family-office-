@@ -1,6 +1,1 @@
-<<<<<<< HEAD
-{"name":"Family Office Núñez","short_name":"Family Office","description":"Panel privado de cartera, dividendos y patrimonio.","start_url":"./","scope":"./","display":"standalone","background_color":"#f4f7fb","theme_color":"#12355b","lang":"es","icons":[{"src":"./icons/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
-=======
-﻿{"name":"Family Office Núñez","short_name":"Family Office","description":"Panel privado de cartera, dividendos y patrimonio.","start_url":"./","scope":"./","display":"standalone","background_color":"#f4f7fb","theme_color":"#12355b","lang":"es","icons":[{"src":"./icons/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
-
->>>>>>> 434302f (Añadir importación de cartera desde DivvyDiary)
+﻿{"name":"Family Office Núñez","short_name":"Family Office","description":"Panel privado de cartera, dividendos y patrimonio.","start_url":"./","scope":"./","display":"standalone","background_color":"#f3f4f6","theme_color":"#d97706","lang":"es","icons":[{"src":"./icons/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}

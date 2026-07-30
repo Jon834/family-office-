@@ -1,6 +1,7 @@
-﻿const CACHE='family-office-v4';
+﻿const CACHE='family-office-v5';
 const STATIC_ASSETS=['./','./index.html','./styles.css','./app.js','./manifest.webmanifest','./icons/icon.svg'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(STATIC_ASSETS)))});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim()))});
 self.addEventListener('message',event=>{if(event.data?.type==='SKIP_WAITING')self.skipWaiting()});
 self.addEventListener('fetch',event=>{if(event.request.method!=='GET')return;const request=event.request;const url=new URL(request.url);if(request.mode==='navigate'){event.respondWith(fetch(request).then(response=>{const clone=response.clone();caches.open(CACHE).then(cache=>cache.put('./index.html',clone));return response}).catch(()=>caches.match('./index.html')));return}if(url.origin===location.origin){event.respondWith(caches.match(request).then(cached=>{const network=fetch(request).then(response=>{const clone=response.clone();caches.open(CACHE).then(cache=>cache.put(request,clone));return response}).catch(()=>cached);return cached||network}));return}event.respondWith(fetch(request).catch(()=>caches.match(request)))});
+
