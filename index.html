@@ -1,122 +1,103 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" class="wa-theme-default">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0f172a">
-  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#12355b">
+  <meta name="description" content="Family Office Núñez: cartera, dividendos y patrimonio, con importación de DivvyDiary.">
   <title>Family Office Núñez</title>
-  <style>
-    :root{--bg:#f8fafc;--card:#fff;--text:#0f172a;--muted:#64748b;--accent:#1d4ed8;--border:#dbe3ee;--ok:#166534;--warn:#9a3412}
-    *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text)}
-    header{position:sticky;top:0;background:#0f172a;color:white;padding:16px;z-index:5} header h1{font-size:20px;margin:0} header p{margin:4px 0 0;color:#cbd5e1;font-size:13px}
-    main{max-width:920px;margin:auto;padding:16px 16px 90px}.grid{display:grid;gap:12px}.kpis{grid-template-columns:repeat(2,1fr)}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px}.kpi strong{font-size:24px;display:block}.muted{color:var(--muted);font-size:13px}
-    nav{display:flex;gap:8px;overflow:auto;padding-bottom:8px}.tab{white-space:nowrap;border:1px solid var(--border);background:white;border-radius:999px;padding:9px 13px}.tab.active{background:var(--accent);color:white;border-color:var(--accent)}
-    section.panel{display:none}.panel.active{display:block}.form-grid{display:grid;gap:12px}.field label{display:block;font-weight:600;font-size:14px;margin-bottom:5px}.field input,.field select,.field textarea{width:100%;border:1px solid var(--border);border-radius:12px;padding:11px;font:inherit;background:white}.field textarea{min-height:88px;resize:vertical}
-    button.primary,button.secondary,button.danger{border:0;border-radius:12px;padding:11px 14px;font-weight:700}.primary{background:var(--accent);color:white}.secondary{background:#e2e8f0;color:#0f172a}.danger{background:#fee2e2;color:#991b1b}.actions{display:flex;gap:8px;flex-wrap:wrap}
-    table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:9px;border-bottom:1px solid var(--border)}th{color:var(--muted)}.scroll{overflow:auto}.row-actions{display:flex;gap:6px}
-    .badge{display:inline-block;padding:3px 8px;border-radius:999px;background:#dbeafe;color:#1e40af;font-size:12px}.empty{text-align:center;padding:20px;color:var(--muted)}
-    footer{position:fixed;bottom:0;left:0;right:0;background:white;border-top:1px solid var(--border);padding:10px 16px;display:flex;gap:8px;justify-content:center}
-    @media(min-width:700px){.kpis{grid-template-columns:repeat(4,1fr)}.form-grid.two{grid-template-columns:repeat(2,1fr)}.form-grid.three{grid-template-columns:repeat(3,1fr)}}
-  </style>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="https://ka-f.webawesome.com/webawesome@3.10.0/styles/webawesome.css">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="https://ka-f.webawesome.com/webawesome@3.10.0/webawesome.loader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.5.3/papaparse.min.js" defer></script>
+  <script src="./app.js" defer></script>
 </head>
 <body>
-<header><h1>Family Office Núñez</h1><p>Seguimiento patrimonial mensual · Datos guardados en este dispositivo</p></header>
-<main>
-  <div class="grid kpis">
-    <div class="card kpi"><span class="muted">Cartera</span><strong id="kpiPortfolio">0 €</strong></div>
-    <div class="card kpi"><span class="muted">Liquidez</span><strong id="kpiCash">0 €</strong></div>
-    <div class="card kpi"><span class="muted">Deuda</span><strong id="kpiDebt">0 €</strong></div>
-    <div class="card kpi"><span class="muted">Patrimonio neto</span><strong id="kpiNet">0 €</strong></div>
-  </div>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">FO</div>
+      <div><strong>Family Office Núñez</strong><small>Panel patrimonial privado</small></div>
+    </div>
+    <div class="top-actions">
+      <wa-button id="themeBtn" appearance="plain" aria-label="Cambiar tema"><wa-icon name="moon"></wa-icon></wa-button>
+      <wa-button id="importBtn" variant="brand"><wa-icon slot="start" name="file-import"></wa-icon>Importar DivvyDiary</wa-button>
+    </div>
+  </header>
 
-  <div class="card" style="margin-top:14px">
-    <nav id="tabs">
-      <button class="tab active" data-tab="current">Mes actual</button>
-      <button class="tab" data-tab="portfolio">Cartera</button>
-      <button class="tab" data-tab="history">Histórico</button>
-      <button class="tab" data-tab="decisions">Decisiones</button>
-      <button class="tab" data-tab="backup">Copias</button>
-    </nav>
+  <nav class="nav-tabs" aria-label="Secciones">
+    <button class="nav-item active" data-view="dashboard"><wa-icon name="chart-line"></wa-icon>Resumen</button>
+    <button class="nav-item" data-view="portfolio"><wa-icon name="briefcase"></wa-icon>Cartera</button>
+    <button class="nav-item" data-view="history"><wa-icon name="clock-rotate-left"></wa-icon>Histórico</button>
+    <button class="nav-item" data-view="settings"><wa-icon name="gear"></wa-icon>Datos</button>
+  </nav>
 
-    <section id="current" class="panel active">
-      <h2>Cierre mensual</h2>
-      <div class="form-grid two">
-        <div class="field"><label>Mes</label><input id="month" type="month"></div>
-        <div class="field"><label>Disponible para invertir (€)</label><input id="investable" type="number" step="100"></div>
-        <div class="field"><label>Liquidez (€)</label><input id="cash" type="number" step="100"></div>
-        <div class="field"><label>Deuda (€)</label><input id="debt" type="number" step="100"></div>
-        <div class="field"><label>Valor inmuebles (€)</label><input id="property" type="number" step="1000"></div>
-        <div class="field"><label>Dividendos últimos 12 meses (€)</label><input id="dividends" type="number" step="10"></div>
-        <div class="field"><label>Gasto familiar anual (€)</label><input id="annualExpenses" type="number" step="100"></div>
-        <div class="field"><label>Aportación mensual prevista (€)</label><input id="contribution" type="number" step="100"></div>
+  <main class="app-shell">
+    <section id="dashboard" class="view active">
+      <div class="hero">
+        <div><p class="eyebrow">SITUACIÓN ACTUAL</p><h1>Tu patrimonio, en una sola vista</h1><p id="lastUpdated">Importa el CSV de DivvyDiary para comenzar.</p></div>
+        <wa-button id="snapshotBtn" appearance="outlined"><wa-icon slot="start" name="camera"></wa-icon>Guardar cierre mensual</wa-button>
       </div>
-      <div class="field"><label>Decisiones o dudas del mes</label><textarea id="notes"></textarea></div>
-      <div class="field"><label>Empresas, sectores o riesgos a vigilar</label><textarea id="watchlist"></textarea></div>
-      <div class="actions"><button id="saveMonth" class="primary">Guardar cierre mensual</button><button id="newMonth" class="secondary">Nuevo mes</button></div>
-      <p id="saveStatus" class="muted" aria-live="polite"></p>
-    </section>
-
-    <section id="portfolio" class="panel">
-      <h2>Cartera actual</h2>
-      <div class="form-grid three">
-        <div class="field"><label>Empresa / activo</label><input id="assetName"></div>
-        <div class="field"><label>Ticker</label><input id="assetTicker"></div>
-        <div class="field"><label>Valor actual (€)</label><input id="assetValue" type="number" step="0.01"></div>
-        <div class="field"><label>Dividendo anual (€)</label><input id="assetDividend" type="number" step="0.01"></div>
-        <div class="field"><label>Sector</label><input id="assetSector"></div>
-        <div class="field"><label>País</label><input id="assetCountry"></div>
+      <div class="kpi-grid">
+        <article class="kpi"><span>Valor de cartera</span><strong id="kpiValue">0 €</strong><small id="kpiPositions">0 posiciones</small></article>
+        <article class="kpi"><span>Coste invertido</span><strong id="kpiCost">0 €</strong><small id="kpiGain">Plusvalía: 0 €</small></article>
+        <article class="kpi"><span>Dividendos anuales</span><strong id="kpiDividends">0 €</strong><small id="kpiYield">Yield: 0 %</small></article>
+        <article class="kpi"><span>Yield on cost</span><strong id="kpiYoc">0 %</strong><small id="kpiMonthly">Media mensual: 0 €</small></article>
       </div>
-      <button id="addAsset" class="primary">Añadir posición</button>
-      <div class="scroll" style="margin-top:12px"><table><thead><tr><th>Activo</th><th>Valor</th><th>Dividendo</th><th></th></tr></thead><tbody id="assetRows"></tbody></table></div>
+      <div class="dashboard-grid">
+        <wa-card class="panel"><div class="panel-head"><div><h2>Distribución por sector</h2><p>Valor de mercado</p></div></div><div id="sectorChart" class="bar-chart empty-state">Sin datos</div></wa-card>
+        <wa-card class="panel"><div class="panel-head"><div><h2>Distribución por país</h2><p>Principales exposiciones</p></div></div><div id="countryChart" class="bar-chart empty-state">Sin datos</div></wa-card>
+      </div>
+      <wa-card class="panel"><div class="panel-head"><div><h2>Principales posiciones</h2><p>Por peso actual en cartera</p></div><wa-button appearance="plain" data-go="portfolio">Ver cartera completa</wa-button></div><div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Valor</th><th>Peso</th><th>Dividendo anual</th><th>Yield</th></tr></thead><tbody id="topPositions"><tr><td colspan="5" class="empty-cell">Todavía no hay posiciones.</td></tr></tbody></table></div></wa-card>
     </section>
 
-    <section id="history" class="panel">
-      <h2>Histórico mensual</h2>
-      <div id="historyList"></div>
+    <section id="portfolio" class="view">
+      <div class="section-head"><div><p class="eyebrow">CARTERA</p><h1>Posiciones de DivvyDiary</h1><p>La sincronización usa el ISIN y conserva el histórico mensual.</p></div><wa-button id="portfolioImportBtn" variant="brand"><wa-icon slot="start" name="file-import"></wa-icon>Importar CSV</wa-button></div>
+      <wa-card class="panel controls"><wa-input id="searchInput" label="Buscar" placeholder="Empresa, ticker o ISIN" clearable></wa-input><wa-select id="sectorFilter" label="Sector"><wa-option value="">Todos</wa-option></wa-select><wa-select id="countryFilter" label="País"><wa-option value="">Todos</wa-option></wa-select></wa-card>
+      <wa-card class="panel"><div class="table-wrap"><table class="portfolio-table"><thead><tr><th>Empresa</th><th>Cantidad</th><th>Precio medio</th><th>Precio</th><th>Valor</th><th>Ganancia</th><th>Peso</th><th>Div. anual</th><th>Yield</th><th>YOC</th><th>Próximo pago</th></tr></thead><tbody id="portfolioRows"><tr><td colspan="11" class="empty-cell">Importa un CSV de DivvyDiary.</td></tr></tbody></table></div></wa-card>
     </section>
 
-    <section id="decisions" class="panel">
-      <h2>Análisis de decisiones pasadas</h2>
-      <div id="decisionList"></div>
+    <section id="history" class="view">
+      <div class="section-head"><div><p class="eyebrow">HISTÓRICO</p><h1>Cierres mensuales</h1><p>Cada cierre guarda una fotografía de los indicadores principales.</p></div><wa-button id="historySnapshotBtn" variant="brand"><wa-icon slot="start" name="camera"></wa-icon>Guardar cierre</wa-button></div>
+      <wa-card class="panel"><div id="historyChart" class="history-chart empty-state">Sin cierres mensuales</div></wa-card>
+      <wa-card class="panel"><div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Valor</th><th>Coste</th><th>Plusvalía</th><th>Dividendos previstos</th><th>Posiciones</th><th></th></tr></thead><tbody id="historyRows"><tr><td colspan="7" class="empty-cell">No hay cierres guardados.</td></tr></tbody></table></div></wa-card>
     </section>
 
-    <section id="backup" class="panel">
-      <h2>Exportación y copias de seguridad</h2>
-      <p>Exporta una copia completa en JSON para restaurar todos los meses y posiciones. El Markdown está optimizado para subirlo a ChatGPT.</p>
-      <div class="actions"><button id="exportJson" class="primary">Exportar copia JSON</button><button id="exportMd" class="secondary">Exportar último mes en Markdown</button><label class="secondary" style="cursor:pointer">Importar JSON<input id="importJson" type="file" accept="application/json" hidden></label></div>
-      <p class="muted">Los datos se guardan en IndexedDB dentro del navegador. Conviene exportar una copia periódicamente.</p>
+    <section id="settings" class="view">
+      <div class="section-head"><div><p class="eyebrow">DATOS Y PRIVACIDAD</p><h1>Copias e informes</h1><p>La información permanece en este navegador. GitHub Pages no recibe tus datos.</p></div></div>
+      <div class="settings-grid">
+        <wa-card class="action-card"><wa-icon name="file-export"></wa-icon><h2>Exportar copia JSON</h2><p>Guarda cartera, cierres mensuales y configuración.</p><wa-button id="exportJsonBtn" appearance="outlined">Descargar copia</wa-button></wa-card>
+        <wa-card class="action-card"><wa-icon name="file-import"></wa-icon><h2>Restaurar copia JSON</h2><p>Recupera los datos en este u otro dispositivo.</p><wa-button id="restoreJsonBtn" appearance="outlined">Seleccionar archivo</wa-button></wa-card>
+        <wa-card class="action-card"><wa-icon name="robot"></wa-icon><h2>Informe para ChatGPT</h2><p>Genera un Markdown con la cartera y su distribución.</p><wa-button id="markdownBtn" variant="brand">Descargar informe</wa-button></wa-card>
+        <wa-card class="action-card danger-card"><wa-icon name="trash"></wa-icon><h2>Borrar datos locales</h2><p>Elimina definitivamente la información de este navegador.</p><wa-button id="clearBtn" variant="danger" appearance="outlined">Borrar todo</wa-button></wa-card>
+      </div>
     </section>
-  </div>
-</main>
-<footer><button id="installBtn" class="primary" hidden>Instalar app</button><span class="muted">Funciona sin conexión tras la primera apertura</span></footer>
-<script>
-const DB='familyOfficeNunez', VERSION=1; let db; let deferredPrompt;
-const euro=new Intl.NumberFormat('es-ES',{style:'currency',currency:'EUR',maximumFractionDigits:0});
-function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open(DB,VERSION);r.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains('months'))d.createObjectStore('months',{keyPath:'month'});if(!d.objectStoreNames.contains('assets'))d.createObjectStore('assets',{keyPath:'id',autoIncrement:true});};r.onsuccess=()=>{db=r.result;res(db)};r.onerror=()=>rej(r.error)})}
-function store(name,mode='readonly'){return db.transaction(name,mode).objectStore(name)}
-function all(name){return new Promise((res,rej)=>{const r=store(name).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
-function put(name,v){return new Promise((res,rej)=>{const r=store(name,'readwrite').put(v);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
-function add(name,v){return new Promise((res,rej)=>{const r=store(name,'readwrite').add(v);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
-function del(name,k){return new Promise((res,rej)=>{const r=store(name,'readwrite').delete(k);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)})}
-const n=id=>Number(document.getElementById(id).value||0), t=id=>document.getElementById(id).value.trim();
-async function snapshot(){const assets=await all('assets');return {month:t('month'),investable:n('investable'),cash:n('cash'),debt:n('debt'),property:n('property'),dividends:n('dividends'),annualExpenses:n('annualExpenses'),contribution:n('contribution'),notes:t('notes'),watchlist:t('watchlist'),portfolioValue:assets.reduce((s,a)=>s+a.value,0),portfolioDividend:assets.reduce((s,a)=>s+a.dividend,0),savedAt:new Date().toISOString()}}
-async function refresh(){const assets=await all('assets'), months=(await all('months')).sort((a,b)=>b.month.localeCompare(a.month));const latest=months[0]||{};const pv=assets.reduce((s,a)=>s+a.value,0);document.getElementById('kpiPortfolio').textContent=euro.format(pv);document.getElementById('kpiCash').textContent=euro.format(latest.cash||0);document.getElementById('kpiDebt').textContent=euro.format(latest.debt||0);document.getElementById('kpiNet').textContent=euro.format(pv+(latest.cash||0)+(latest.property||0)-(latest.debt||0));renderAssets(assets);renderHistory(months);renderDecisions(months)}
-function renderAssets(items){const tb=document.getElementById('assetRows');tb.innerHTML='';if(!items.length){tb.innerHTML='<tr><td colspan="4" class="empty">Sin posiciones</td></tr>';return}items.forEach(a=>{const tr=document.createElement('tr');tr.innerHTML=`<td><b>${a.name}</b><div class="muted">${a.ticker||''} · ${a.sector||''} · ${a.country||''}</div></td><td>${euro.format(a.value)}</td><td>${euro.format(a.dividend)}</td><td><button class="danger" data-id="${a.id}">Eliminar</button></td>`;tb.appendChild(tr)});tb.querySelectorAll('button').forEach(b=>b.addEventListener('click',async()=>{await del('assets',Number(b.dataset.id));refresh()}))}
-function renderHistory(items){const el=document.getElementById('historyList');if(!items.length){el.innerHTML='<div class="empty">Todavía no hay cierres mensuales.</div>';return}el.innerHTML=items.map(m=>`<div class="card" style="margin:10px 0"><div style="display:flex;justify-content:space-between;gap:8px"><b>${m.month}</b><span class="badge">Patrimonio ${euro.format((m.portfolioValue||0)+m.cash+m.property-m.debt)}</span></div><div class="muted">Cartera ${euro.format(m.portfolioValue||0)} · Dividendos LTM ${euro.format(m.dividends||0)} · Disponible ${euro.format(m.investable||0)}</div></div>`).join('')}
-function renderDecisions(items){const el=document.getElementById('decisionList');const rows=items.filter(m=>m.notes||m.watchlist);if(!rows.length){el.innerHTML='<div class="empty">No hay decisiones registradas.</div>';return}el.innerHTML=rows.map(m=>`<div class="card" style="margin:10px 0"><b>${m.month}</b><p>${m.notes||'Sin decisión registrada'}</p><div class="muted">Vigilancia: ${m.watchlist||'—'}</div></div>`).join('')}
-function download(name,content,type){const u=URL.createObjectURL(new Blob([content],{type}));const a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
-function md(m,assets){return `# Family Office Núñez — ${m.month}\n\n## Resumen\n- Disponible para invertir: ${m.investable} €\n- Liquidez: ${m.cash} €\n- Deuda: ${m.debt} €\n- Inmuebles: ${m.property} €\n- Cartera: ${m.portfolioValue} €\n- Dividendos últimos 12 meses: ${m.dividends} €\n- Gastos familiares anuales: ${m.annualExpenses} €\n- Aportación mensual prevista: ${m.contribution} €\n\n## Decisiones\n${m.notes||'Sin decisiones registradas'}\n\n## Vigilancia\n${m.watchlist||'Sin elementos registrados'}\n\n## Cartera actual\n| Activo | Ticker | Valor (€) | Dividendo anual (€) | Sector | País |\n|---|---|---:|---:|---|---|\n${assets.map(a=>`| ${a.name} | ${a.ticker||''} | ${a.value} | ${a.dividend} | ${a.sector||''} | ${a.country||''} |`).join('\n')}`}
-document.getElementById('tabs').addEventListener('click',e=>{if(!e.target.dataset.tab)return;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===e.target));document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('active',x.id===e.target.dataset.tab))});
-document.getElementById('addAsset').addEventListener('click',async()=>{if(!t('assetName')||n('assetValue')<=0)return;await add('assets',{name:t('assetName'),ticker:t('assetTicker'),value:n('assetValue'),dividend:n('assetDividend'),sector:t('assetSector'),country:t('assetCountry')});['assetName','assetTicker','assetValue','assetDividend','assetSector','assetCountry'].forEach(id=>document.getElementById(id).value='');refresh()});
-document.getElementById('saveMonth').addEventListener('click',async()=>{const s=await snapshot();if(!s.month){document.getElementById('saveStatus').textContent='Selecciona un mes.';return}await put('months',s);document.getElementById('saveStatus').textContent='Cierre guardado en el dispositivo.';refresh()});
-document.getElementById('newMonth').addEventListener('click',()=>{['month','investable','cash','debt','property','dividends','annualExpenses','contribution','notes','watchlist'].forEach(id=>document.getElementById(id).value='')});
-document.getElementById('exportJson').addEventListener('click',async()=>{download('family-office-backup.json',JSON.stringify({months:await all('months'),assets:await all('assets')},null,2),'application/json')});
-document.getElementById('exportMd').addEventListener('click',async()=>{const months=(await all('months')).sort((a,b)=>b.month.localeCompare(a.month));if(!months[0])return;download(`family-office-${months[0].month}.md`,md(months[0],await all('assets')),'text/markdown')});
-document.getElementById('importJson').addEventListener('change',async e=>{const data=JSON.parse(await e.target.files[0].text());for(const m of data.months||[])await put('months',m);for(const a of data.assets||[]){const copy={...a};delete copy.id;await add('assets',copy)}refresh()});
-window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;document.getElementById('installBtn').hidden=false});document.getElementById('installBtn').addEventListener('click',async()=>{if(deferredPrompt){deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;document.getElementById('installBtn').hidden=true}});
-(async()=>{await openDB();const now=new Date();document.getElementById('month').value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;await refresh();if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js')})();
-</script>
+  </main>
+
+  <input id="csvFile" type="file" accept=".csv,text/csv" hidden>
+  <input id="jsonFile" type="file" accept=".json,application/json" hidden>
+
+  <wa-dialog id="importDialog" label="Importar cartera de DivvyDiary" light-dismiss>
+    <div id="importStepSelect">
+      <div class="drop-zone" id="dropZone"><wa-icon name="cloud-arrow-up"></wa-icon><h3>Selecciona el CSV exportado por DivvyDiary</h3><p>Formato compatible: separador punto y coma y decimales con coma.</p><wa-button id="chooseCsvBtn" variant="brand">Elegir archivo</wa-button></div>
+    </div>
+    <div id="importStepPreview" hidden>
+      <wa-callout variant="brand"><strong id="importFilename"></strong><br><span id="importSummary"></span></wa-callout>
+      <div class="preview-kpis"><div><span>Posiciones</span><strong id="previewCount">0</strong></div><div><span>Valor total</span><strong id="previewValue">0 €</strong></div><div><span>Dividendos</span><strong id="previewDividends">0 €</strong></div></div>
+      <div class="change-grid"><span class="change-new" id="previewNew">0 nuevas</span><span class="change-update" id="previewUpdated">0 actualizadas</span><span class="change-remove" id="previewRemoved">0 ausentes</span></div>
+      <wa-radio-group id="importMode" label="Modo de importación" value="update"><wa-radio value="update">Actualizar y conservar posiciones ausentes</wa-radio><wa-radio value="replace">Reemplazar la cartera por el CSV</wa-radio></wa-radio-group>
+    </div>
+    <wa-button slot="footer" id="cancelImportBtn" appearance="plain">Cancelar</wa-button>
+    <wa-button slot="footer" id="confirmImportBtn" variant="brand" hidden>Confirmar importación</wa-button>
+  </wa-dialog>
+
+  <wa-dialog id="confirmDialog" label="Confirmación">
+    <p id="confirmText"></p>
+    <wa-button slot="footer" id="confirmCancel" appearance="plain">Cancelar</wa-button>
+    <wa-button slot="footer" id="confirmOk" variant="danger">Confirmar</wa-button>
+  </wa-dialog>
+
+  <div id="notice" class="notice" role="status" aria-live="polite"></div>
 </body>
 </html>
