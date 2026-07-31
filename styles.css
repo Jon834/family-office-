@@ -107,3 +107,12 @@ body.dark .sort-button{color:#e4e4e7}
 body.dark .sort-button small{color:#cbd5e1}
 body.dark .sort-button.active{color:#f59e0b}
 body.dark #dashboard .panel-head,body.dark #history .panel-head,body.dark #settings .panel-head{background:transparent}
+body.dark wa-card.panel::part(base),
+body.dark wa-card.action-card::part(base),
+body.dark wa-card.form-panel::part(base){background:linear-gradient(180deg,#27272a,#18181b) !important;border-color:#4b5563 !important;color:#fafaf9}
+body.dark .panel-head,body.dark .section-head,body.dark .hero{color:#fafaf9}
+body.dark table{background:transparent}
+body.dark tbody tr{background:transparent}
+body.dark tbody tr:hover{background:rgba(245,158,11,.08)}
+body.dark td,body.dark th{background-clip:padding-box}
+body.dark #dashboard .table-wrap,body.dark #portfolio .table-wrap,body.dark #history .table-wrap,body.dark #settings .table-wrap{background:linear-gradient(180deg,rgba(39,39,42,.28),rgba(24,24,27,.12))}

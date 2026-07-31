@@ -163,6 +163,112 @@ function defaultReportEntry() {
   };
 }
 
+function hasStoredData(snapshot) {
+  return Boolean(
+    snapshot && (
+      snapshot.portfolio?.length ||
+      snapshot.history?.length ||
+      snapshot.assets?.length ||
+      snapshot.liabilities?.length ||
+      snapshot.reportHistory?.length ||
+      snapshot.lastImport
+    )
+  );
+}
+
+function createDemoState() {
+  return migrateState({
+    schemaVersion: SCHEMA_VERSION,
+    portfolio: [
+      {
+        id: 'ES0167050915', isin: 'ES0167050915', symbol: 'ACS', name: 'ACS Actividades de Construccion y Servicios SA',
+        quantity: 500, averagePrice: 31.24, totalCost: 15620, currentPrice: 46.1, marketValue: 23050, gain: 7430, gainPercent: 0.4757,
+        currency: 'EUR', allocation: 0.183, dividendYield: 0.022, yieldOnCost: 0.0324, annualDividend: 507.1, dividendPerShare: 1.014,
+        dividendFrequency: 'semiannual', dividendCagr: 0.06, sector: 'Industriales', country: 'Espana', transactions: 6,
+        exDate: '2026-07-04', payDate: '2026-08-10', taxRate: 0.19, notes: 'Posicion demo.', thesis: 'Negocio internacional y caja robusta.',
+        targetPrice: 50, status: 'active', unreliableMatch: false, fallbackKey: 'ACS|ACS ACTIVIDADES DE CONSTRUCCION Y SERVICIOS SA',
+        createdAt: '2026-07-31T09:00:00.000Z', updatedAt: '2026-07-31T09:00:00.000Z', archivedAt: null, importMeta: { source: 'demo', importedAt: '2026-07-31T09:00:00.000Z', rowNumber: 1 }, raw: {}
+      },
+      {
+        id: 'US00287Y1091', isin: 'US00287Y1091', symbol: 'ABBV', name: 'AbbVie Inc',
+        quantity: 110, averagePrice: 121.4, totalCost: 13354, currentPrice: 171.3, marketValue: 18843, gain: 5489, gainPercent: 0.411,
+        currency: 'USD', allocation: 0.149, dividendYield: 0.0492, yieldOnCost: 0.0694, annualDividend: 925.9, dividendPerShare: 8.417,
+        dividendFrequency: 'quarterly', dividendCagr: 0.07, sector: 'Salud', country: 'Estados Unidos', transactions: 5,
+        exDate: '2026-07-14', payDate: '2026-08-16', taxRate: 0.15, notes: 'Posicion core de dividend growth.', thesis: 'Pipeline resiliente.',
+        targetPrice: 185, status: 'active', unreliableMatch: false, fallbackKey: 'ABBV|ABBVIE INC',
+        createdAt: '2026-07-31T09:00:00.000Z', updatedAt: '2026-07-31T09:00:00.000Z', archivedAt: null, importMeta: { source: 'demo', importedAt: '2026-07-31T09:00:00.000Z', rowNumber: 2 }, raw: {}
+      },
+      {
+        id: 'GB0002875804', isin: 'GB0002875804', symbol: 'BATS', name: 'British American Tobacco PLC',
+        quantity: 430, averagePrice: 28.2, totalCost: 12126, currentPrice: 33.7, marketValue: 14491, gain: 2365, gainPercent: 0.195,
+        currency: 'GBP', allocation: 0.115, dividendYield: 0.0535, yieldOnCost: 0.0639, annualDividend: 775, dividendPerShare: 1.802,
+        dividendFrequency: 'quarterly', dividendCagr: 0.02, sector: 'Consumo defensivo', country: 'Reino Unido', transactions: 4,
+        exDate: '2026-07-05', payDate: '2026-08-01', taxRate: 0, notes: 'Renta alta con peso controlado.', thesis: 'Flujo de caja elevado.',
+        targetPrice: 36, status: 'active', unreliableMatch: false, fallbackKey: 'BATS|BRITISH AMERICAN TOBACCO PLC',
+        createdAt: '2026-07-31T09:00:00.000Z', updatedAt: '2026-07-31T09:00:00.000Z', archivedAt: null, importMeta: { source: 'demo', importedAt: '2026-07-31T09:00:00.000Z', rowNumber: 3 }, raw: {}
+      },
+      {
+        id: 'US92826C8394', isin: 'US92826C8394', symbol: 'V', name: 'Visa Inc',
+        quantity: 52, averagePrice: 219.5, totalCost: 11414, currentPrice: 276.8, marketValue: 14393.6, gain: 2979.6, gainPercent: 0.261,
+        currency: 'USD', allocation: 0.114, dividendYield: 0.0076, yieldOnCost: 0.0096, annualDividend: 109.2, dividendPerShare: 2.1,
+        dividendFrequency: 'quarterly', dividendCagr: 0.15, sector: 'Financieras', country: 'Estados Unidos', transactions: 3,
+        exDate: '2026-08-08', payDate: '2026-09-03', taxRate: 0.15, notes: 'Calidad y crecimiento.', thesis: 'Red global con pricing power.',
+        targetPrice: 300, status: 'active', unreliableMatch: false, fallbackKey: 'V|VISA INC',
+        createdAt: '2026-07-31T09:00:00.000Z', updatedAt: '2026-07-31T09:00:00.000Z', archivedAt: null, importMeta: { source: 'demo', importedAt: '2026-07-31T09:00:00.000Z', rowNumber: 4 }, raw: {}
+      },
+      {
+        id: 'NL0010273215', isin: 'NL0010273215', symbol: 'ASML', name: 'ASML Holding NV',
+        quantity: 18, averagePrice: 598, totalCost: 10764, currentPrice: 742.5, marketValue: 13365, gain: 2601, gainPercent: 0.2417,
+        currency: 'EUR', allocation: 0.106, dividendYield: 0.0106, yieldOnCost: 0.0131, annualDividend: 141.9, dividendPerShare: 7.88,
+        dividendFrequency: 'annual', dividendCagr: 0.18, sector: 'Tecnologia', country: 'Paises Bajos', transactions: 4,
+        exDate: '2026-04-25', payDate: '2026-05-07', taxRate: 0.15, notes: 'Moat en litografia EUV.', thesis: 'Proveedor critico de semis.',
+        targetPrice: 820, status: 'active', unreliableMatch: false, fallbackKey: 'ASML|ASML HOLDING NV',
+        createdAt: '2026-07-31T09:00:00.000Z', updatedAt: '2026-07-31T09:00:00.000Z', archivedAt: null, importMeta: { source: 'demo', importedAt: '2026-07-31T09:00:00.000Z', rowNumber: 5 }, raw: {}
+      },
+      {
+        id: 'ES0130960018', isin: 'ES0130960018', symbol: 'ENG', name: 'Enagas SA',
+        quantity: 860, averagePrice: 15.1, totalCost: 12986, currentPrice: 12.39, marketValue: 10655.4, gain: -2330.6, gainPercent: -0.1795,
+        currency: 'EUR', allocation: 0.085, dividendYield: 0.0588, yieldOnCost: 0.0482, annualDividend: 627.8, dividendPerShare: 0.73,
+        dividendFrequency: 'annual', dividendCagr: -0.01, sector: 'Utilities', country: 'Espana', transactions: 8,
+        exDate: '2026-06-30', payDate: '2026-07-18', taxRate: 0.19, notes: 'Renta defensiva.', thesis: 'Caja recurrente con riesgo regulatorio.',
+        targetPrice: 14, status: 'watch', unreliableMatch: false, fallbackKey: 'ENG|ENAGAS SA',
+        createdAt: '2026-07-31T09:00:00.000Z', updatedAt: '2026-07-31T09:00:00.000Z', archivedAt: null, importMeta: { source: 'demo', importedAt: '2026-07-31T09:00:00.000Z', rowNumber: 6 }, raw: {}
+      }
+    ],
+    history: [
+      { id: 'snap-2026-02', month: '2026-02', date: '2026-02-28T18:00:00.000Z', value: 102400, cost: 91350, gain: 11050, dividends: 2980, count: 6, liquidity: 9500, otherAssets: 20200, debt: 96300, netWorth: 35800, monthlyContribution: 1500, notes: '', positions: [] },
+      { id: 'snap-2026-03', month: '2026-03', date: '2026-03-31T18:00:00.000Z', value: 107900, cost: 93100, gain: 14800, dividends: 3140, count: 6, liquidity: 10800, otherAssets: 20400, debt: 95600, netWorth: 43500, monthlyContribution: 1500, notes: '', positions: [] },
+      { id: 'snap-2026-04', month: '2026-04', date: '2026-04-30T18:00:00.000Z', value: 112700, cost: 94950, gain: 17750, dividends: 3290, count: 6, liquidity: 12100, otherAssets: 20800, debt: 94900, netWorth: 50700, monthlyContribution: 1500, notes: '', positions: [] },
+      { id: 'snap-2026-05', month: '2026-05', date: '2026-05-31T18:00:00.000Z', value: 117600, cost: 96850, gain: 20750, dividends: 3470, count: 6, liquidity: 13350, otherAssets: 21400, debt: 94150, netWorth: 58200, monthlyContribution: 1500, notes: '', positions: [] },
+      { id: 'snap-2026-06', month: '2026-06', date: '2026-06-30T18:00:00.000Z', value: 121850, cost: 98580, gain: 23270, dividends: 3605, count: 6, liquidity: 14120, otherAssets: 21950, debt: 93420, netWorth: 64500, monthlyContribution: 1500, notes: '', positions: [] },
+      { id: 'snap-2026-07', month: '2026-07', date: '2026-07-31T18:00:00.000Z', value: 125918, cost: 100074.4, gain: 25843.6, dividends: 3656, count: 6, liquidity: 15240, otherAssets: 22600, debt: 92800, netWorth: 70958, monthlyContribution: 1500, notes: '', positions: [] }
+    ],
+    backups: [],
+    assets: [
+      { id: 'asset-demo-1', name: 'Cuenta remunerada', type: 'cash', value: 15240, notes: 'Fondo de oportunidad', updatedAt: '2026-07-31T09:00:00.000Z' },
+      { id: 'asset-demo-2', name: 'Letras del Tesoro', type: 'treasury', value: 12400, notes: 'Vencimiento a 9 meses', updatedAt: '2026-07-31T09:00:00.000Z' },
+      { id: 'asset-demo-3', name: 'Plaza de garaje', type: 'property', value: 10200, notes: 'Valor neto conservador', updatedAt: '2026-07-31T09:00:00.000Z' }
+    ],
+    liabilities: [
+      { id: 'liab-demo-1', name: 'Hipoteca vivienda', type: 'mortgage', value: 92800, notes: 'Tipo fijo 1,35%', updatedAt: '2026-07-31T09:00:00.000Z' }
+    ],
+    reportHistory: [
+      { id: 'report-demo-1', createdAt: '2026-05-31T20:00:00.000Z', score: 71, netWorth: 58200, dividends: 3470, concentrationLabel: 'Media', filename: 'informe-family-office-2026-05-31.md' },
+      { id: 'report-demo-2', createdAt: '2026-06-30T20:00:00.000Z', score: 74, netWorth: 64500, dividends: 3605, concentrationLabel: 'Media', filename: 'informe-family-office-2026-06-30.md' },
+      { id: 'report-demo-3', createdAt: '2026-07-31T20:00:00.000Z', score: 77, netWorth: 70958, dividends: 3656, concentrationLabel: 'Media', filename: 'informe-family-office-2026-07-31.md' }
+    ],
+    settings: { monthlyExpense: 2200, targetAnnualDividends: 12000, targetNetWorth: 450000, monthlyContribution: 1500 },
+    tableSorts: defaultTableSorts(),
+    lastImport: '2026-07-31T09:00:00.000Z',
+    lastBackupAt: '2026-07-31T08:50:00.000Z',
+    lastImportUndo: null,
+    theme: 'light'
+  });
+}
+
+function withDemoState(snapshot) {
+  return hasStoredData(snapshot) ? snapshot : createDemoState();
+}
 function loadState() {
   try {
     return withDemoState(migrateState(JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')));
@@ -874,6 +980,7 @@ document.addEventListener('click', event => {
 });
 registerServiceWorker();
 render();
+
 
 
 
