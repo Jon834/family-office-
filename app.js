@@ -1787,3 +1787,14 @@ saveState();
 render();
 
 
+function loadGuidedDemo() {
+  askConfirm('Se sustituiran los datos locales actuales por la demo anual de ejemplo. Puedes exportar una copia JSON antes si quieres conservarlos.', () => {
+    const currentTheme = state.theme === 'dark' ? 'dark' : 'light';
+    const demo = createDemoState();
+    Object.assign(state, defaultState(), demo, { theme: currentTheme, lastImportUndo: null, backups: [] });
+    saveState();
+    render();
+    showNotice('Demo anual cargada en la aplicacion.');
+  });
+}
+$('#loadDemoBtn')?.addEventListener('click', loadGuidedDemo);
