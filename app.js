@@ -1,6 +1,9 @@
 const STORAGE_KEY = 'family-office-nunez-v2';
 const SCHEMA_VERSION = 6;
 const ACTIVE_STATUSES = new Set(['active', 'watch']);
+const ADVISORY_STATUS_LABELS = { pending: 'Pendiente', accepted: 'Aceptada', executed: 'Ejecutada', discarded: 'Descartada', postponed: 'Pospuesta', reviewing: 'En revision', closed: 'Cerrada' };
+const ADVISORY_KIND_LABELS = { fact: 'Hecho objetivo', alert: 'Alerta automatica', estimate: 'Estimacion', recommendation: 'Recomendacion', opinion: 'Revision humana' };
+const REVIEW_PHASE_LABELS = { '3m': 'Revision 3 meses', '6m': 'Revision 6 meses', '12m': 'Revision 12 meses' };
 const ANALYSIS_PROMPT_PATH = './chatgpt-analysis-prompt.md';
 const DEFAULT_ANALYSIS_PROMPT = [
   '# Analisis patrimonial para ChatGPT',
@@ -151,39 +154,6 @@ let deferredWorker = null;
 let analysisPromptCache = null;
 const historyFilterState = { preset: 'all', fromYear: '', toYear: '' };
 let newWorker = null;
-
-function defaultState() {
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    portfolio: [],
-    transactions: [],
-    history: [],
-    backups: [],
-    assets: [],
-    liabilities: [],
-    reportHistory: [
-      { id: 'report-demo-1', createdAt: '2025-08-31T20:00:00.000Z', score: 58, netWorth: 1150, dividends: 2190, concentrationLabel: 'Alta', filename: 'comite-inversion-family-office-2025-08-31.md' },
-      { id: 'report-demo-2', createdAt: '2025-09-30T20:00:00.000Z', score: 60, netWorth: 6820, dividends: 2335, concentrationLabel: 'Alta', filename: 'comite-inversion-family-office-2025-09-30.md' },
-      { id: 'report-demo-3', createdAt: '2025-10-31T20:00:00.000Z', score: 63, netWorth: 12380, dividends: 2475, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2025-10-31.md' },
-      { id: 'report-demo-4', createdAt: '2025-11-30T20:00:00.000Z', score: 65, netWorth: 18310, dividends: 2610, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2025-11-30.md' },
-      { id: 'report-demo-5', createdAt: '2025-12-31T20:00:00.000Z', score: 67, netWorth: 26020, dividends: 2765, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2025-12-31.md' },
-      { id: 'report-demo-6', createdAt: '2026-01-31T20:00:00.000Z', score: 68, netWorth: 30370, dividends: 2875, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-01-31.md' },
-      { id: 'report-demo-7', createdAt: '2026-02-28T20:00:00.000Z', score: 70, netWorth: 35800, dividends: 2980, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-02-28.md' },
-      { id: 'report-demo-8', createdAt: '2026-03-31T20:00:00.000Z', score: 72, netWorth: 43500, dividends: 3140, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-03-31.md' },
-      { id: 'report-demo-9', createdAt: '2026-04-30T20:00:00.000Z', score: 73, netWorth: 50700, dividends: 3290, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-04-30.md' },
-      { id: 'report-demo-10', createdAt: '2026-05-31T20:00:00.000Z', score: 74, netWorth: 58200, dividends: 3470, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-05-31.md' },
-      { id: 'report-demo-11', createdAt: '2026-06-30T20:00:00.000Z', score: 75, netWorth: 64500, dividends: 3605, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-06-30.md' },
-      { id: 'report-demo-12', createdAt: '2026-07-31T17:00:00.000Z', score: 77, netWorth: 70958, dividends: 3656, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-07-31.md' }
-    ],
-    settings: { ...DEFAULT_SETTINGS },
-    tableSorts: defaultTableSorts(),
-    lastImport: null,
-    lastTransactionsImport: null,
-    lastBackupAt: null,
-    lastImportUndo: null,
-    theme: 'light'
-  };
-}
 
 function defaultAsset() {
   return {
@@ -366,29 +336,6 @@ function loadState() {
   } catch {
     return withDemoState(defaultState());
   }
-}
-
-function migrateState(raw) {
-  const base = defaultState();
-  if (!raw || typeof raw !== 'object') {
-    return base;
-  }
-
-  return {
-    ...base,
-    ...raw,
-    schemaVersion: SCHEMA_VERSION,
-    portfolio: Array.isArray(raw.portfolio) ? raw.portfolio.map(migratePosition).filter(Boolean) : [],
-    history: Array.isArray(raw.history) ? raw.history.map(migrateSnapshot).filter(Boolean) : [],
-    backups: Array.isArray(raw.backups) ? raw.backups.map(migrateBackup).filter(Boolean).slice(0, 10) : [],
-    assets: Array.isArray(raw.assets) ? raw.assets.map(migrateAsset).filter(Boolean) : [],
-    liabilities: Array.isArray(raw.liabilities) ? raw.liabilities.map(migrateLiability).filter(Boolean) : [],
-    reportHistory: Array.isArray(raw.reportHistory) ? raw.reportHistory.map(migrateReportEntry).filter(Boolean).slice(0, 24) : [],
-    settings: migrateSettings(raw.settings),
-    tableSorts: migrateTableSorts(raw.tableSorts),
-    lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null,
-    theme: raw.theme === 'dark' ? 'dark' : 'light'
-  };
 }
 
 function defaultTableSorts() {
@@ -594,28 +541,6 @@ function migrateSnapshot(snapshot) {
   };
 }
 
-function migrateBackup(backup) {
-  if (!backup || typeof backup !== 'object' || !backup.snapshot) {
-    return null;
-  }
-  return {
-    id: backup.id || `backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    createdAt: backup.createdAt || new Date().toISOString(),
-    reason: backup.reason || 'import',
-    source: backup.source || null,
-    snapshot: {
-      portfolio: Array.isArray(backup.snapshot.portfolio) ? backup.snapshot.portfolio.map(migratePosition).filter(Boolean) : [],
-      history: Array.isArray(backup.snapshot.history) ? backup.snapshot.history.map(migrateSnapshot).filter(Boolean) : [],
-      assets: Array.isArray(backup.snapshot.assets) ? backup.snapshot.assets.map(migrateAsset).filter(Boolean) : [],
-      liabilities: Array.isArray(backup.snapshot.liabilities) ? backup.snapshot.liabilities.map(migrateLiability).filter(Boolean) : [],
-      reportHistory: Array.isArray(backup.snapshot.reportHistory) ? backup.snapshot.reportHistory.map(migrateReportEntry).filter(Boolean) : [],
-      settings: migrateSettings(backup.snapshot.settings),
-      lastImport: backup.snapshot.lastImport || null,
-      lastBackupAt: backup.snapshot.lastBackupAt || null
-    }
-  };
-}
-
 function saveState() {
   state.schemaVersion = SCHEMA_VERSION;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -742,53 +667,120 @@ function independenceScenarios(metrics = fullMetrics()) {
     };
   });
 }
+function ensurePlanState() { state.plan = migratePlanState(state.plan); }
+function planScenarioDefs() {
+  return [
+    { id: 'prudente', label: 'Prudente', growth: 0.02, marketReturn: 0.04, color: 'var(--chart-portfolio)' },
+    { id: 'central', label: 'Central', growth: 0.04, marketReturn: 0.06, color: 'var(--chart-networth)' },
+    { id: 'favorable', label: 'Favorable', growth: 0.06, marketReturn: 0.08, color: 'var(--chart-dow)' }
+  ];
+}
+function projectPlanScenario(def, metrics, targetType, targetValue, monthlyContribution, horizonYears) {
+  const annualContribution = (monthlyContribution || 0) * 12;
+  const baseYield = metrics.yield || 0.035;
+  let portfolioValue = metrics.value;
+  let dividends = metrics.dividends;
+  let years = null;
+  const maxYears = Math.max(horizonYears || 0, 40);
+  const progressSeries = [];
+  for (let year = 1; year <= maxYears; year += 1) {
+    portfolioValue = (portfolioValue + annualContribution) * (1 + def.marketReturn);
+    const generatedIncome = (annualContribution * baseYield) + (portfolioValue * baseYield * 0.18);
+    dividends = Math.max(dividends * (1 + def.growth), dividends + generatedIncome);
+    const netWorth = metrics.netWorth + (portfolioValue - metrics.value);
+    const currentValue = targetType === 'networth' ? netWorth : dividends;
+    if (year <= (horizonYears || maxYears)) progressSeries.push(targetValue ? currentValue / targetValue : 0);
+    if (years === null && targetValue && currentValue >= targetValue) years = year;
+  }
+  return { ...def, years, eta: years === null ? 'Mas de 40 anos' : `${new Date().getFullYear() + years}`, progressSeries };
+}
+function computePlan() {
+  ensurePlanState();
+  const metrics = fullMetrics();
+  const plan = state.plan;
+  const targetType = plan.targetType;
+  const fallbackTarget = targetType === 'networth' ? state.settings.targetNetWorth : targetType === 'dividends' ? state.settings.targetAnnualDividends : (state.settings.monthlyExpense ? state.settings.monthlyExpense * 12 : null);
+  const targetValue = plan.targetValue ?? fallbackTarget;
+  const monthlyContribution = plan.monthlyContribution ?? state.settings.monthlyContribution;
+  const monthlyExpense = plan.monthlyExpense ?? state.settings.monthlyExpense;
+  const horizonYears = plan.horizonYears || 15;
+  const currentValue = targetType === 'networth' ? metrics.netWorth : metrics.dividends;
+  const gap = targetValue === null || targetValue === undefined ? null : Math.max(0, targetValue - currentValue);
+  const defs = planScenarioDefs();
+  const scenarios = defs.map(def => projectPlanScenario(def, metrics, targetType, targetValue, monthlyContribution, horizonYears));
+  const central = scenarios.find(s => s.id === 'central');
+  const levers = targetValue === null || targetValue === undefined ? [] : [
+    { id: 'contribution-plus', label: '+150 EUR/mes de aportacion', years: projectPlanScenario(defs[1], metrics, targetType, targetValue, (monthlyContribution || 0) + 150, horizonYears).years },
+    { id: 'contribution-plus10', label: '+10% de aportacion mensual', years: projectPlanScenario(defs[1], metrics, targetType, targetValue, (monthlyContribution || 0) * 1.1, horizonYears).years },
+    { id: 'expense-minus10', label: '-10% de gasto mensual', years: targetType === 'fi' && monthlyExpense ? projectPlanScenario(defs[1], metrics, targetType, monthlyExpense * 0.9 * 12, monthlyContribution, horizonYears).years : central.years }
+  ];
+  const bestLever = levers.filter(item => item.years !== null).sort((a, b) => a.years - b.years)[0] || null;
+  const feasibility = targetValue === null || targetValue === undefined ? null : central.years === null ? 'poco-realista' : central.years <= horizonYears ? 'alcanzable' : central.years <= horizonYears * 1.5 ? 'ajustado' : 'poco-realista';
+  return { targetType, targetValue: targetValue ?? null, monthlyContribution, monthlyExpense, horizonYears, currentValue, gap, scenarios, central, levers, bestLever, feasibility, metrics };
+}
+function renderPlan() {
+  const narrativeNode = $('#planNarrative');
+  if (!narrativeNode) return;
+  ensurePlanState();
+  const typeSelect = $('#planTargetType');
+  if (typeSelect) typeSelect.value = state.plan.targetType;
+  const valueInput = $('#planTargetValue');
+  if (valueInput) valueInput.value = state.plan.targetValue ?? '';
+  const contributionInput = $('#planMonthlyContribution');
+  if (contributionInput) contributionInput.value = state.plan.monthlyContribution ?? '';
+  const expenseInput = $('#planMonthlyExpense');
+  if (expenseInput) expenseInput.value = state.plan.monthlyExpense ?? '';
+  const horizonInput = $('#planHorizonYears');
+  if (horizonInput) horizonInput.value = state.plan.horizonYears ?? '';
+  const plan = computePlan();
+  const targetLabel = plan.targetType === 'networth' ? 'patrimonio neto' : plan.targetType === 'dividends' ? 'dividendos anuales' : 'independencia financiera (dividendos vs. gasto)';
+  const hasTarget = plan.targetValue !== null;
+  $('#planGapValue').textContent = hasTarget ? eur.format(plan.gap) : '0 EUR';
+  $('#planGapMeta').textContent = hasTarget ? `Objetivo de ${targetLabel}: ${eur.format(plan.targetValue)}.` : 'Configura una meta para estimar la distancia.';
+  $('#planCentralEta').textContent = hasTarget && plan.central.years !== null ? plan.central.eta : '--';
+  $('#planCentralMeta').textContent = hasTarget && plan.central.years !== null ? `${plan.central.years} anos con el escenario central.` : 'Sin proyeccion.';
+  $('#planBestLeverValue').textContent = plan.bestLever ? plan.bestLever.label : '--';
+  $('#planBestLeverMeta').textContent = plan.bestLever ? `Reduce el plazo a ${plan.bestLever.years} anos.` : 'Sin comparativa.';
+  const feasibilityLabels = { alcanzable: 'Alcanzable', ajustado: 'Ajustado', 'poco-realista': 'Poco realista' };
+  $('#planFeasibilityValue').textContent = plan.feasibility ? feasibilityLabels[plan.feasibility] : '--';
+  $('#planFeasibilityMeta').textContent = hasTarget ? `Horizonte configurado: ${plan.horizonYears} anos.` : 'Importa datos y define objetivos.';
+  const scenarioRows = $('#planScenarioRows');
+  scenarioRows.className = hasTarget ? 'scenario-list' : 'scenario-list empty-state';
+  scenarioRows.innerHTML = hasTarget ? plan.scenarios.map(s => `<div class="scenario-card"><strong>${s.label}</strong><span>${s.years === null ? 'Mas de 40 anos' : `${s.years} anos`}</span><small>Meta estimada: ${s.eta}</small></div>`).join('') : 'Sin datos';
+  const leverRows = $('#planLeverRows');
+  leverRows.className = plan.levers.length ? 'signal-list' : 'signal-list empty-state';
+  leverRows.innerHTML = plan.levers.length ? plan.levers.map(lever => `<div class="signal-row signal-${lever.years !== null && plan.central.years !== null && lever.years < plan.central.years ? 'good' : 'warn'}"><strong>${escapeHtml(lever.label)}</strong><span>${lever.years === null ? 'Sin impacto estimable' : `${lever.years} anos`}</span></div>`).join('') : 'Sin datos';
+  const chart = $('#planProjectionChart');
+  if (!hasTarget || !plan.scenarios[0].progressSeries.length) {
+    chart.className = 'history-chart empty-state';
+    chart.textContent = 'Sin datos';
+  } else {
+    chart.className = 'history-chart';
+    const labels = plan.scenarios[0].progressSeries.map((item, index) => `Ano ${index + 1}`);
+    chart.innerHTML = buildLineChart(plan.scenarios.map(s => ({ label: s.label, color: s.color, values: s.progressSeries.map(value => Math.round(value * 100)) })), labels, { ariaLabel: 'Progreso proyectado hacia la meta' });
+  }
+  const narrative = [];
+  if (!hasTarget) narrative.push('Configura un objetivo y una meta en EUR para ver la simulacion completa.');
+  else {
+    narrative.push(plan.gap <= 0 ? 'El objetivo ya esta cubierto con los datos actuales.' : `Faltan ${eur.format(plan.gap)} para alcanzar el objetivo de ${targetLabel}.`);
+    narrative.push(plan.central.years === null ? 'En el escenario central no se alcanza la meta dentro de 40 anos con los supuestos actuales.' : `En el escenario central se alcanzaria en ${plan.central.years} anos (${plan.central.eta}).`);
+    if (plan.bestLever && plan.central.years !== null && plan.bestLever.years < plan.central.years) narrative.push(`La palanca con mayor impacto es "${plan.bestLever.label}", que adelantaria la meta a ${plan.bestLever.years} anos.`);
+  }
+  narrativeNode.className = 'summary-stack';
+  narrativeNode.innerHTML = narrative.map(line => `<small>${escapeHtml(line)}</small>`).join('');
+  const assumptionsNode = $('#planAssumptions');
+  const assumptions = [
+    { title: 'Aportacion mensual', detail: eur.format(plan.monthlyContribution || 0) },
+    { title: 'Yield de partida', detail: formatPercent(plan.metrics.yield) },
+    { title: 'Crecimiento de dividendo', detail: 'Prudente 2% | Central 4% | Favorable 6% anual' },
+    { title: 'Revalorizacion de mercado', detail: 'Prudente 4% | Central 6% | Favorable 8% anual' }
+  ];
+  assumptionsNode.className = 'signal-list';
+  assumptionsNode.innerHTML = assumptions.map(item => `<div class="signal-row signal-good"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div>`).join('');
+}
 function reportHistoryRows() { return [...state.reportHistory].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); }
 function saveReportHistoryEntry(entry) { state.reportHistory = [entry, ...state.reportHistory].slice(0, 24); }
-function render() { applyTheme(); renderDashboard(); renderPortfolio(); renderHistory(); renderFilters(); renderAssets(); renderLiabilities(); renderSettings(); renderUndoState(); renderBackupStatus(); renderReportHistory(); renderSortableHeaders(); }
 function applyTheme() { document.body.classList.toggle('dark', state.theme === 'dark'); $('#themeBtn wa-icon')?.setAttribute('name', state.theme === 'dark' ? 'sun' : 'moon'); }
-function renderDashboard() {
-  const portfolio = activePortfolio();
-  const metrics = fullMetrics(portfolio);
-  const snapshots = [...state.history].sort((a, b) => new Date(b.date) - new Date(a.date));
-  const lastSnapshot = snapshots[0] || null;
-  const previousSnapshot = snapshots[1] || null;
-  const score = portfolioScore(portfolio);
-  const signals = concentrationSignals(portfolio);
-  const scenarios = independenceScenarios(metrics);
-  $('#kpiValue').textContent = eur.format(metrics.value);
-  $('#kpiPositions').textContent = `${metrics.count} posiciones`;
-  $('#kpiCost').textContent = eur.format(metrics.cost);
-  $('#kpiGain').textContent = `Plusvalia: ${eur.format(metrics.gain)}`;
-  $('#kpiDividends').textContent = eur.format(metrics.dividends);
-  $('#kpiYield').textContent = `Yield: ${pct.format(metrics.yield)}`;
-  $('#kpiYoc').textContent = pct.format(metrics.yoc);
-  $('#kpiMonthly').textContent = `Media mensual: ${eur.format(metrics.dividends / 12)}`;
-  $('#lastUpdated').textContent = state.lastImport ? `Ultima importacion: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'long', timeStyle: 'short' }).format(new Date(state.lastImport))}` : 'Importa el CSV de DivvyDiary para comenzar.';
-  $('#netWorthValue').textContent = eur.format(metrics.netWorth);
-  $('#netWorthMeta').textContent = metrics.netWorthGoalProgress === null ? 'Configura un objetivo de patrimonio neto.' : `Progreso: ${pct.format(Math.min(metrics.netWorthGoalProgress, 9.99))}`;
-  $('#liquidityValue').textContent = eur.format(metrics.liquidity);
-  $('#liquidityMeta').textContent = `Otros activos: ${eur.format(metrics.otherAssets)}`;
-  $('#debtValue').textContent = eur.format(metrics.liabilities);
-  $('#debtMeta').textContent = lastSnapshot ? `Ultimo cierre: ${eur.format(lastSnapshot.debt || 0)}` : 'Sin cierre mensual todavia.';
-  $('#goalValue').textContent = metrics.dividendGoalProgress === null ? '--' : pct.format(Math.min(metrics.dividendGoalProgress, 9.99));
-  $('#goalMeta').textContent = state.settings.targetAnnualDividends ? `Objetivo: ${eur.format(state.settings.targetAnnualDividends)}` : 'Configura un objetivo anual de dividendos.';
-  $('#snapshotDelta').textContent = lastSnapshot && previousSnapshot ? `Variacion vs. cierre anterior: ${formatPercent(relativeDelta(lastSnapshot.netWorth || 0, previousSnapshot.netWorth || 0))}` : 'Necesitas al menos dos cierres para ver variaciones.';
-  $('#latestSnapshot').textContent = lastSnapshot ? `Ultimo cierre: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(lastSnapshot.date))} | Patrimonio neto ${eur.format(lastSnapshot.netWorth || 0)}` : 'Todavia no hay cierres mensuales.';
-  $('#portfolioScore').textContent = String(score.value);
-  $('#portfolioScoreLabel').textContent = `${score.label} | ${score.value}/100`;
-  $('#portfolioScoreMeta').textContent = score.label === 'Sin datos' ? score.detail : `${score.detail} Concentracion ${score.concentrationLabel.toLowerCase()}.`;
-  $('#concentrationRows').className = signals.length ? 'signal-list' : 'signal-list empty-state';
-  $('#concentrationRows').innerHTML = signals.length ? signals.map(signal => `<div class="signal-row signal-${signal.tone}"><strong>${signal.title}</strong><span>${escapeHtml(signal.name)}</span><small>${formatPercent(signal.weight)} | ${signal.label}</small></div>`).join('') : 'Sin datos';
-  $('#fiGoalStatus').textContent = scenarios ? `Objetivo anual: ${eur.format(scenarios[0].target)} | progreso actual ${pct.format(Math.min(scenarios[0].progress, 9.99))}` : 'Configura tu gasto mensual para ver escenarios.';
-  $('#fiGoalMeta').textContent = scenarios ? `Aportacion mensual considerada: ${state.settings.monthlyContribution === null ? eur.format(0) : eur.format(state.settings.monthlyContribution)}` : 'Se calcula con dividendos actuales, aportacion mensual y tres supuestos de crecimiento.';
-  const fiRows = $('#fiRows');
-  if (!scenarios) { fiRows.className = 'scenario-list empty-state'; fiRows.textContent = 'Sin datos'; }
-  else { fiRows.className = 'scenario-list'; fiRows.innerHTML = scenarios.map(s => `<div class="scenario-card"><strong>${s.label}</strong><span>${s.status}</span><small>${s.years === null ? 'Mas de 40 anos' : `${s.years} anos`}</small><small>Meta estimada: ${s.eta}</small></div>`).join(''); }
-  renderBars('#sectorChart', groupByValue(portfolio, 'sector', metrics.value).slice(0, 8));
-  renderBars('#countryChart', groupByValue(portfolio, 'country', metrics.value).slice(0, 8));
-  const top = sortRows(sortedPortfolio(portfolio).slice(0, 7), 'topPositions');
-  $('#topPositions').innerHTML = top.length ? top.map(position => `<tr><td class="company-cell"><strong>${escapeHtml(position.name)}</strong><small>${escapeHtml(position.symbol)} | ${escapeHtml(position.isin || 'Sin ISIN')}</small></td><td>${eur.format(position.marketValue || 0)}</td><td>${formatPercent(position.allocation ?? (metrics.value ? (position.marketValue || 0) / metrics.value : 0))}</td><td>${eur.format(position.annualDividend || 0)}</td><td>${formatPercent(position.dividendYield)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Todavia no hay posiciones.</td></tr>';
-}
 function renderBars(selector, data) { const element = $(selector); if (!data.length) { element.className = 'bar-chart empty-state'; element.textContent = 'Sin datos'; return; } const max = data[0].value || 1; element.className = 'bar-chart'; element.innerHTML = data.map(item => `<div class="bar-row"><span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, (item.value / max) * 100)}%"></div></div><span class="bar-value">${pct.format(item.weight)}</span></div>`).join(''); }
 function portfolioFilters() { return { query: ($('#searchInput')?.value || '').toLowerCase(), sector: $('#sectorFilter')?.value || '', country: $('#countryFilter')?.value || '', currency: $('#currencyFilter')?.value || '', status: $('#statusFilter')?.value || 'active' }; }
 function filteredPortfolio() { const { query, sector, country, currency, status } = portfolioFilters(); const rows = state.portfolio.filter(position => { const haystack = `${position.name} ${position.symbol} ${position.isin}`.toLowerCase(); const positionStatus = normalizeStatus(position.status); const statusOk = status === 'all' ? true : positionStatus === status; return (!query || haystack.includes(query)) && (!sector || position.sector === sector) && (!country || position.country === country) && (!currency || position.currency === currency) && statusOk; }); return sortRows(rows, 'portfolio'); }
@@ -1033,12 +1025,92 @@ function parseCsv(file) { if (!window.Papa) { showNotice('No se ha cargado el le
 function renderPreviewList(selector, items, formatter) { const element = $(selector); element.innerHTML = items.length ? items.map(formatter).join('') : '<li>Sin cambios</li>'; }
 function renderImportPreview() { if (!pendingImport) return; const preview = pendingImport; $('#importFilename').textContent = preview.file.name; $('#importSummary').textContent = `${preview.validEntries.length} posiciones listas para importar y ${preview.skippedRows.length} filas omitidas por seguridad.`; $('#previewCount').textContent = preview.totals.count; $('#previewValue').textContent = eur.format(preview.totals.value); $('#previewCost').textContent = eur.format(preview.totals.cost); $('#previewGain').textContent = eur.format(preview.totals.gain); $('#previewDividends').textContent = eur.format(preview.totals.dividends); $('#previewNew').textContent = `${preview.newItems.length} nuevas`; $('#previewUpdated').textContent = `${preview.updatedItems.length} actualizadas`; $('#previewRemoved').textContent = `${preview.removedItems.length} ausentes`; $('#previewErrors').textContent = `${preview.issues.length} incidencias`; renderPreviewList('#previewNewList', preview.newItems, item => `<li>${escapeHtml(item.position.name)}<small>${escapeHtml(item.position.isin)}</small></li>`); renderPreviewList('#previewUpdatedList', preview.updatedItems, item => `<li>${escapeHtml(item.position.name)}<small>${escapeHtml(item.changedFields.join(', '))}</small></li>`); renderPreviewList('#previewRemovedList', preview.removedItems, item => `<li>${escapeHtml(item.position.name)}<small>${escapeHtml(item.position.isin)}</small></li>`); const issues = [...preview.skippedRows.map(item => ({ rowNumber: item.rowNumber, text: `${item.position.name} | ${item.reason}` })), ...preview.issues.map(issue => ({ rowNumber: issue.rowNumber, text: `${issue.label} | ${issue.message}` }))]; renderPreviewList('#previewIssueList', issues, issue => `<li>Fila ${issue.rowNumber}: ${escapeHtml(issue.text)}</li>`); $('#importStepSelect').hidden = true; $('#importStepPreview').hidden = false; $('#confirmImportBtn').hidden = false; updateImportWarnings(); }
 function updateImportWarnings() { const warning = $('#importWarnings'); if (!pendingImport) { warning.hidden = true; return; } const mode = $('#importMode').value || 'update'; const messages = []; if (pendingImport.skippedRows.length) messages.push(`Se omitiran ${pendingImport.skippedRows.length} filas sin ISIN valido o con ISIN duplicado.`); if (mode === 'replace' && pendingImport.removedItems.length) messages.push(`Las ${pendingImport.removedItems.length} posiciones ausentes se archivaran, no se borraran.`); if (!messages.length) { warning.hidden = true; warning.innerHTML = ''; return; } warning.hidden = false; warning.innerHTML = messages.map(message => `<div>${escapeHtml(message)}</div>`).join(''); }
-function cloneSnapshot() { return JSON.parse(JSON.stringify({ portfolio: state.portfolio, history: state.history, assets: state.assets, liabilities: state.liabilities, reportHistory: state.reportHistory, settings: state.settings, lastImport: state.lastImport, lastBackupAt: state.lastBackupAt })); }
 function saveImportBackup(sourceName) { const snapshot = cloneSnapshot(); const backup = { id: crypto.randomUUID?.() || `backup-${Date.now()}`, createdAt: new Date().toISOString(), reason: 'before-import', source: sourceName, snapshot }; state.lastImportUndo = backup; state.lastBackupAt = backup.createdAt; state.backups = [backup, ...state.backups].slice(0, 10); }
 function mergeImportedPosition(existing, incoming) { const now = new Date().toISOString(); return { ...existing, ...incoming, id: existing.id || incoming.id, isin: incoming.isin || existing.isin, notes: existing.notes || '', thesis: existing.thesis || '', targetPrice: existing.targetPrice ?? null, status: existing.status === 'watch' ? 'watch' : 'active', unreliableMatch: false, fallbackKey: incoming.fallbackKey || existing.fallbackKey, createdAt: existing.createdAt || now, updatedAt: now, archivedAt: null }; }
 function createImportedPosition(incoming) { const now = new Date().toISOString(); return { ...incoming, id: incoming.isin || incoming.id || `import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, notes: incoming.notes || '', thesis: incoming.thesis || '', targetPrice: incoming.targetPrice ?? null, status: 'active', createdAt: now, updatedAt: now, archivedAt: null }; }
 function confirmImport() { if (!pendingImport) return; const mode = $('#importMode').value || 'update'; saveImportBackup(pendingImport.file.name); const next = new Map(); if (mode === 'update') { state.portfolio.forEach(position => next.set(position.id, { ...position })); pendingImport.validEntries.forEach(entry => { const record = entry.existing ? mergeImportedPosition(entry.existing, entry.position) : createImportedPosition(entry.position); next.set(record.id, record); }); } else { state.portfolio.filter(position => !position.isin).forEach(position => next.set(position.id, { ...position })); pendingImport.validEntries.forEach(entry => { const record = entry.existing ? mergeImportedPosition(entry.existing, entry.position) : createImportedPosition(entry.position); next.set(record.id, record); }); const importedIsins = new Set(pendingImport.validEntries.map(entry => entry.position.isin)); state.portfolio.forEach(position => { if (position.isin && !importedIsins.has(position.isin)) next.set(position.id, { ...position, status: 'archived', archivedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); }); } state.portfolio = [...next.values()]; state.lastImport = new Date().toISOString(); saveState(); render(); $('#importDialog').open = false; showNotice(`Importacion completada: ${pendingImport.validEntries.length} posiciones sincronizadas.`); pendingImport = null; }
-function undoLastImport() { if (!state.lastImportUndo?.snapshot) { showNotice('No hay ninguna importacion que deshacer.'); return; } const snapshot = state.lastImportUndo.snapshot; state.portfolio = snapshot.portfolio.map(migratePosition).filter(Boolean); state.history = snapshot.history.map(migrateSnapshot).filter(Boolean); state.assets = snapshot.assets.map(migrateAsset).filter(Boolean); state.liabilities = snapshot.liabilities.map(migrateLiability).filter(Boolean); state.reportHistory = snapshot.reportHistory.map(migrateReportEntry).filter(Boolean); state.settings = migrateSettings(snapshot.settings); state.lastImport = snapshot.lastImport || null; state.lastBackupAt = snapshot.lastBackupAt || null; state.lastImportUndo = null; saveState(); render(); showNotice('Se ha restaurado la copia previa a la ultima importacion.'); }
+function openTransactionsImport() { pendingTransactionImport = null; $('#transactionsCsvFile').value = ''; $('#transactionsStepSelect').hidden = false; $('#transactionsStepPreview').hidden = true; $('#confirmTransactionsBtn').hidden = true; $('#transactionsWarnings').hidden = true; $('#transactionsDialog').open = true; }
+function normalizeTransactionCsvRow(row, index) {
+  const cleanRow = sanitizeRow(row);
+  const pick = (...keys) => { for (const key of keys) { if (cleanRow[key] !== undefined && cleanRow[key] !== '') return cleanRow[key]; } return undefined; };
+  const typeRaw = cleanText(pick('type', 'transactionType', 'direction', 'orderType')).toLowerCase();
+  const type = /sell|venta|vend/.test(typeRaw) ? 'SELL' : 'BUY';
+  const isin = normalizeIsin(pick('isin'));
+  const symbol = cleanText(pick('symbol', 'ticker', 'wkn')).toUpperCase();
+  const name = cleanText(pick('name') || symbol || `Fila ${index + 2}`);
+  const quantity = parseLocaleNumber(pick('shares', 'quantity', 'units'));
+  let price = parseLocaleNumber(pick('price', 'pricePerShare', 'sharePrice'));
+  let amount = parseLocaleNumber(pick('amount', 'total', 'value', 'netAmount'));
+  if (amount === null && price !== null && quantity !== null) amount = Math.abs(price * quantity);
+  if (price === null && amount !== null && quantity) price = Math.abs(amount / quantity);
+  const fees = parseLocaleNumber(pick('fee', 'fees', 'commission')) || 0;
+  const taxes = parseLocaleNumber(pick('tax', 'taxes')) || 0;
+  const rawDate = pick('date', 'datetime', 'day', 'bookingDate');
+  const datetime = normalizeDate(rawDate) || cleanText(rawDate);
+  const portfolio = cleanText(pick('portfolio', 'depot', 'account'));
+  const transaction = migrateTransaction({ datetime: datetime || new Date().toISOString(), type, isin, symbol, name, quantity, price, amount, currency: pick('currency'), fees, taxes, portfolio, importMeta: { source: 'divvydiary-transactions', importedAt: new Date().toISOString(), rowNumber: index + 2 }, raw: cleanRow });
+  const issues = [];
+  if (!isin && !symbol) issues.push('Operacion sin ISIN ni ticker identificable.');
+  if (quantity === null) issues.push('Falta la cantidad.');
+  if (amount === null) issues.push('Falta el importe (o precio) de la operacion.');
+  if (!datetime) issues.push('Falta la fecha de la operacion.');
+  return { rowNumber: index + 2, transaction, issues };
+}
+function buildTransactionsImportPreview(file, rows) {
+  const existingKeys = new Set(state.transactions.map(tx => tx.dedupeKey));
+  const seenInFile = new Set();
+  const preview = { file, rows, validEntries: [], newItems: [], duplicateItems: [], issues: [], totals: null };
+  rows.forEach(item => {
+    const { transaction, issues, rowNumber } = item;
+    if (issues.length) preview.issues.push(...issues.map(message => ({ rowNumber, message })));
+    if (seenInFile.has(transaction.dedupeKey)) return;
+    seenInFile.add(transaction.dedupeKey);
+    if (existingKeys.has(transaction.dedupeKey)) { preview.duplicateItems.push({ rowNumber, transaction }); return; }
+    preview.validEntries.push({ rowNumber, transaction });
+    preview.newItems.push({ rowNumber, transaction });
+  });
+  const buys = preview.newItems.filter(item => item.transaction.type === 'BUY').length;
+  const sells = preview.newItems.length - buys;
+  const netAmount = preview.newItems.reduce((sum, item) => sum + (item.transaction.type === 'SELL' ? -(item.transaction.amount || 0) : (item.transaction.amount || 0)), 0);
+  const fees = preview.newItems.reduce((sum, item) => sum + (item.transaction.costs || 0), 0);
+  preview.totals = { count: preview.newItems.length, buys, sells, netAmount, fees };
+  return preview;
+}
+function parseTransactionsCsv(file) { if (!window.Papa) { showNotice('No se ha cargado el lector CSV. Comprueba la conexion.'); return; } Papa.parse(file, { header: true, skipEmptyLines: true, delimiter: ';', encoding: 'UTF-8', complete: result => { const rows = result.data.map((row, index) => normalizeTransactionCsvRow(row, index)).filter(item => item.transaction.isin || item.transaction.symbol); if (!rows.length) { showNotice('El CSV no contiene operaciones reconocibles.'); return; } pendingTransactionImport = buildTransactionsImportPreview(file, rows); renderTransactionsImportPreview(); }, error: error => showNotice(`Error al leer el CSV: ${error.message}`) }); }
+function renderTransactionsImportPreview() {
+  if (!pendingTransactionImport) return;
+  const preview = pendingTransactionImport;
+  $('#transactionsFilename').textContent = preview.file.name;
+  $('#transactionsSummary').textContent = `${preview.totals.count} operaciones nuevas y ${preview.duplicateItems.length} ya importadas anteriormente.`;
+  $('#transactionsCount').textContent = preview.totals.count;
+  $('#transactionsBuyCount').textContent = preview.totals.buys;
+  $('#transactionsSellCount').textContent = preview.totals.sells;
+  $('#transactionsNetAmount').textContent = eur.format(preview.totals.netAmount);
+  $('#transactionsFees').textContent = eur.format(preview.totals.fees);
+  $('#transactionsNew').textContent = `${preview.newItems.length} nuevas`;
+  $('#transactionsUpdated').textContent = `${preview.duplicateItems.length} duplicadas`;
+  $('#transactionsErrors').textContent = `${preview.issues.length} incidencias`;
+  renderPreviewList('#transactionsNewList', preview.newItems, item => `<li>${escapeHtml(item.transaction.name)}<small>${dateEs(item.transaction.date)} | ${formatCurrency(item.transaction.amount, item.transaction.currency)}</small></li>`);
+  renderPreviewList('#transactionsDuplicateList', preview.duplicateItems, item => `<li>${escapeHtml(item.transaction.name)}<small>${dateEs(item.transaction.date)}</small></li>`);
+  renderPreviewList('#transactionsIssueList', preview.issues, issue => `<li>Fila ${issue.rowNumber}: ${escapeHtml(issue.message)}</li>`);
+  const warning = $('#transactionsWarnings');
+  if (preview.duplicateItems.length) { warning.hidden = false; warning.textContent = `Se omitiran ${preview.duplicateItems.length} operaciones ya importadas previamente.`; }
+  else { warning.hidden = true; warning.textContent = ''; }
+  $('#transactionsStepSelect').hidden = true;
+  $('#transactionsStepPreview').hidden = false;
+  $('#confirmTransactionsBtn').hidden = false;
+}
+function confirmTransactionsImport() {
+  if (!pendingTransactionImport) return;
+  const additions = pendingTransactionImport.validEntries.map(entry => migrateTransaction({ ...entry.transaction, id: entry.transaction.dedupeKey }));
+  state.transactions = [...additions, ...state.transactions];
+  state.lastTransactionsImport = new Date().toISOString();
+  saveState();
+  render();
+  $('#transactionsDialog').open = false;
+  showNotice(`Importacion completada: ${additions.length} operaciones nuevas.`);
+  pendingTransactionImport = null;
+}
 function buildMonthlySnapshot() { const portfolio = activePortfolio(); const metrics = fullMetrics(portfolio); return { id: crypto.randomUUID?.() || String(Date.now()), month: new Date().toISOString().slice(0, 7), date: new Date().toISOString(), value: metrics.value, cost: metrics.cost, gain: metrics.gain, dividends: metrics.dividends, count: metrics.count, liquidity: metrics.liquidity, otherAssets: metrics.otherAssets, debt: metrics.liabilities, netWorth: metrics.netWorth, monthlyContribution: state.settings.monthlyContribution, notes: '', positions: sortedPortfolio(portfolio).slice(0, 10).map(position => ({ isin: position.isin, symbol: position.symbol, name: position.name, value: position.marketValue, weight: position.allocation })) }; }
 function saveSnapshot() { const portfolio = activePortfolio(); if (!portfolio.length) { showNotice('Importa primero una cartera.'); return; } const snapshot = buildMonthlySnapshot(); const existingIndex = state.history.findIndex(item => item.month === snapshot.month); if (existingIndex >= 0) { snapshot.id = state.history[existingIndex].id; snapshot.notes = state.history[existingIndex].notes || ''; state.history[existingIndex] = snapshot; } else state.history.push(snapshot); saveState(); renderHistory(); renderDashboard(); showNotice('Cierre mensual guardado.'); }
 function download(name, content, type) { const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([content], { type })); link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); }
@@ -1075,93 +1147,9 @@ function recentReportSummary() {
   if (!reports.length) return ['- No hay informes anteriores registrados.'];
   return reports.map(report => `- ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(report.createdAt))}: score ${report.score ?? '-'} | patrimonio ${report.netWorth === null ? '-' : eur.format(report.netWorth)} | dividendos ${report.dividends === null ? '-' : eur.format(report.dividends)} | concentracion ${report.concentrationLabel || '-'}.`);
 }
-function buildPortfolioDataMarkdown() {
-  const portfolio = sortedPortfolio(activePortfolio());
-  const metrics = fullMetrics(portfolio);
-  const sector = groupByValue(portfolio, 'sector', metrics.value);
-  const country = groupByValue(portfolio, 'country', metrics.value);
-  const score = portfolioScore(portfolio);
-  const signals = concentrationSignals(portfolio);
-  const scenarios = independenceScenarios(metrics);
-  const transactions = transactionRowsData();
-  const txAnalytics = transactionAnalytics(transactions);
-  return [
-    '# Datos patrimoniales exportados',
-    '',
-    `Fecha del informe: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'long' }).format(new Date())}`,
-    '',
-    '## Resumen patrimonial',
-    `- Valor de cartera: ${eur.format(metrics.value)}`,
-    `- Coste invertido: ${eur.format(metrics.cost)}`,
-    `- Plusvalia: ${eur.format(metrics.gain)}`,
-    `- Dividendos anuales estimados: ${eur.format(metrics.dividends)}`,
-    `- Liquidez registrada: ${eur.format(metrics.liquidity)}`,
-    `- Otros activos: ${eur.format(metrics.otherAssets)}`,
-    `- Deuda total: ${eur.format(metrics.liabilities)}`,
-    `- Patrimonio neto: ${eur.format(metrics.netWorth)}`,
-    '',
-    '## Salud de la cartera',
-    `- Puntuacion global: ${score.value}/100 (${score.label})`,
-    ...signals.map(signal => `- Concentracion ${signal.title.toLowerCase()}: ${signal.name} con ${pct.format(signal.weight)} (${signal.label})`),
-    '',
-    '## Objetivos financieros',
-    `- Gasto mensual objetivo: ${state.settings.monthlyExpense === null ? 'No configurado' : eur.format(state.settings.monthlyExpense)}`,
-    `- Objetivo anual de dividendos: ${state.settings.targetAnnualDividends === null ? 'No configurado' : eur.format(state.settings.targetAnnualDividends)}`,
-    `- Objetivo de patrimonio neto: ${state.settings.targetNetWorth === null ? 'No configurado' : eur.format(state.settings.targetNetWorth)}`,
-    `- Aportacion mensual prevista: ${state.settings.monthlyContribution === null ? 'No configurada' : eur.format(state.settings.monthlyContribution)}`,
-    '',
-    '## Escenarios de independencia financiera',
-    ...(scenarios ? scenarios.map(s => `- ${s.label}: ${s.years === null ? 'mas de 40 anos' : `${s.years} anos`} | meta estimada ${s.eta}`) : ['- Configura el gasto mensual para obtener escenarios.']),
-    '',
-    '## Cambios frente al cierre anterior',
-    ...reportDeltaSection(),
-    '',
-    '## Actividad de capital y transacciones',
-    `- Operaciones importadas: ${transactions.length}`,
-    `- Compras netas 12m: ${eur.format(txAnalytics.lastTwelveMonths.netAmount)}`,
-    `- Comisiones e impuestos acumulados: ${eur.format(txAnalytics.allTotals.costs)}`,
-    `- Plusvalia realizada estimada: ${eur.format(txAnalytics.realized)}`,
-    `- Ritmo medio de compras 6m: ${eur.format(txAnalytics.monthlyBuys)}`,
-    '',
-    '## Cartera',
-    '| Empresa | Ticker | ISIN | Valor | Peso | Dividendo anual | Yield | YOC | Estado |',
-    '|---|---|---|---:|---:|---:|---:|---:|---|',
-    ...portfolio.map(position => `| ${position.name.replaceAll('|', '/')} | ${position.symbol} | ${position.isin} | ${eur.format(position.marketValue || 0)} | ${formatPercent(position.allocation)} | ${eur.format(position.annualDividend || 0)} | ${formatPercent(position.dividendYield)} | ${formatPercent(position.yieldOnCost)} | ${position.status} |`),
-    '',
-    '## Distribucion por sectores',
-    ...sector.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`),
-    '',
-    '## Distribucion geografica',
-    ...country.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`),
-    '',
-    '## Liquidez, activos y deuda',
-    ...state.assets.map(asset => `- Activo ${asset.name} (${asset.type}): ${eur.format(asset.value || 0)}`),
-    ...state.liabilities.map(liability => `- Deuda ${liability.name} (${liability.type}): ${eur.format(liability.value || 0)}`),
-    '',
-    '## Historico de informes registrados',
-    ...recentReportSummary(),
-    '',
-    '## Comentarios personales',
-    '- Exportado desde la aplicacion local-first. Los datos permanecen en el dispositivo.'
-  ].join('\n');
-}
 function mergePromptWithData(template, dataBlock) {
   const normalizedTemplate = cleanText(template) ? template : DEFAULT_ANALYSIS_PROMPT;
   return normalizedTemplate.includes('{{PORTFOLIO_DATA}}') ? normalizedTemplate.replace('{{PORTFOLIO_DATA}}', dataBlock) : `${normalizedTemplate.trim()}\n\n---\n\n${dataBlock}`;
-}
-async function markdown() {
-  const portfolio = sortedPortfolio(activePortfolio());
-  const metrics = fullMetrics(portfolio);
-  const score = portfolioScore(portfolio);
-  const filename = `informe-family-office-${new Date().toISOString().slice(0, 10)}.md`;
-  const promptTemplate = await loadAnalysisPromptTemplate();
-  const dataBlock = buildPortfolioDataMarkdown();
-  const finalDocument = mergePromptWithData(promptTemplate, dataBlock);
-  download(filename, finalDocument, 'text/markdown');
-  saveReportHistoryEntry({ ...defaultReportEntry(), createdAt: new Date().toISOString(), score: score.value, netWorth: metrics.netWorth, dividends: metrics.dividends, concentrationLabel: score.concentrationLabel, filename });
-  saveState();
-  renderReportHistory();
-  showNotice('Informe generado con prompt editable y registrado en el historico.');
 }
 function askConfirm(message, onConfirm) {
   confirmAction = typeof onConfirm === 'function' ? onConfirm : null;
@@ -1316,6 +1304,29 @@ if (dropZone) {
     if (file) parseCsv(file);
   });
 }
+$('#transactionsImportBtn')?.addEventListener('click', openTransactionsImport);
+$('#chooseTransactionsBtn')?.addEventListener('click', () => $('#transactionsCsvFile').click());
+$('#cancelTransactionsBtn')?.addEventListener('click', () => { $('#transactionsDialog').open = false; pendingTransactionImport = null; });
+$('#confirmTransactionsBtn')?.addEventListener('click', confirmTransactionsImport);
+$('#transactionsCsvFile')?.addEventListener('change', event => {
+  const file = event.target.files?.[0];
+  if (file) parseTransactionsCsv(file);
+});
+const transactionsDropZone = $('#transactionsDropZone');
+if (transactionsDropZone) {
+  ['dragenter', 'dragover'].forEach(type => transactionsDropZone.addEventListener(type, event => {
+    event.preventDefault();
+    transactionsDropZone.classList.add('dragover');
+  }));
+  ['dragleave', 'drop'].forEach(type => transactionsDropZone.addEventListener(type, event => {
+    event.preventDefault();
+    transactionsDropZone.classList.remove('dragover');
+  }));
+  transactionsDropZone.addEventListener('drop', event => {
+    const file = event.dataTransfer?.files?.[0];
+    if (file) parseTransactionsCsv(file);
+  });
+}
 $('#undoImportBtn')?.addEventListener('click', undoLastImport);
 $('#undoImportSettingsBtn')?.addEventListener('click', undoLastImport);
 $('#snapshotBtn')?.addEventListener('click', saveSnapshot);
@@ -1374,6 +1385,20 @@ $$('[data-go]').forEach(button => button.addEventListener('click', () => switchV
     renderHistory();
   });
 });
+['#planTargetType', '#planTargetValue', '#planMonthlyContribution', '#planMonthlyExpense', '#planHorizonYears'].forEach(selector => {
+  $(selector)?.addEventListener('change', () => {
+    ensurePlanState();
+    state.plan = {
+      targetType: ['fi', 'networth', 'dividends'].includes($('#planTargetType')?.value) ? $('#planTargetType').value : state.plan.targetType,
+      targetValue: parseLocaleNumber($('#planTargetValue')?.value),
+      monthlyContribution: parseLocaleNumber($('#planMonthlyContribution')?.value),
+      monthlyExpense: parseLocaleNumber($('#planMonthlyExpense')?.value),
+      horizonYears: toNum($('#planHorizonYears')?.value, state.plan.horizonYears) || state.plan.horizonYears
+    };
+    saveState();
+    renderPlan();
+  });
+});
 document.addEventListener('click', event => {
   const sortButton = event.target.closest('[data-sort-table]');
   if (sortButton) { toggleTableSort(sortButton.dataset.sortTable, sortButton.dataset.sortKey); return; }
@@ -1417,7 +1442,6 @@ document.addEventListener('click', event => {
   }
 });
 registerServiceWorker();
-render();
 
 
 
@@ -1450,30 +1474,15 @@ function migrateTransaction(entry) {
   const dedupeKey = cleanText(entry.dedupeKey) || cleanText(entry.id) || `${datetime}|${normalizeIsin(entry.isin)}|${type}|${quantity ?? ''}|${amount ?? ''}`;
   return { ...defaultTransaction(), ...entry, id: cleanText(entry.id) || dedupeKey, datetime, date: String(datetime).slice(0, 10), month: String(datetime).slice(0, 7), type, isin: normalizeIsin(entry.isin), symbol: cleanText(entry.symbol).toUpperCase(), name: cleanText(entry.name || entry.symbol || 'Operacion sin nombre'), quantity, price: toNum(entry.price, null), amount, currency: normalizeCurrency(entry.currency), fees, taxes, costs: fees + taxes, portfolio: cleanText(entry.portfolio), totalCash: toNum(entry.totalCash, amount === null ? null : (type === 'BUY' ? amount + fees + taxes : amount - fees - taxes)), importMeta: entry.importMeta && typeof entry.importMeta === 'object' ? entry.importMeta : null, raw: entry.raw && typeof entry.raw === 'object' ? entry.raw : null, dedupeKey };
 }
-function defaultState() {
-  return { schemaVersion: SCHEMA_VERSION, portfolio: [], transactions: [], history: [], backups: [], assets: [], liabilities: [], reportHistory: [
-      { id: 'report-demo-1', createdAt: '2025-08-31T20:00:00.000Z', score: 58, netWorth: 1150, dividends: 2190, concentrationLabel: 'Alta', filename: 'comite-inversion-family-office-2025-08-31.md' },
-      { id: 'report-demo-2', createdAt: '2025-09-30T20:00:00.000Z', score: 60, netWorth: 6820, dividends: 2335, concentrationLabel: 'Alta', filename: 'comite-inversion-family-office-2025-09-30.md' },
-      { id: 'report-demo-3', createdAt: '2025-10-31T20:00:00.000Z', score: 63, netWorth: 12380, dividends: 2475, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2025-10-31.md' },
-      { id: 'report-demo-4', createdAt: '2025-11-30T20:00:00.000Z', score: 65, netWorth: 18310, dividends: 2610, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2025-11-30.md' },
-      { id: 'report-demo-5', createdAt: '2025-12-31T20:00:00.000Z', score: 67, netWorth: 26020, dividends: 2765, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2025-12-31.md' },
-      { id: 'report-demo-6', createdAt: '2026-01-31T20:00:00.000Z', score: 68, netWorth: 30370, dividends: 2875, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-01-31.md' },
-      { id: 'report-demo-7', createdAt: '2026-02-28T20:00:00.000Z', score: 70, netWorth: 35800, dividends: 2980, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-02-28.md' },
-      { id: 'report-demo-8', createdAt: '2026-03-31T20:00:00.000Z', score: 72, netWorth: 43500, dividends: 3140, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-03-31.md' },
-      { id: 'report-demo-9', createdAt: '2026-04-30T20:00:00.000Z', score: 73, netWorth: 50700, dividends: 3290, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-04-30.md' },
-      { id: 'report-demo-10', createdAt: '2026-05-31T20:00:00.000Z', score: 74, netWorth: 58200, dividends: 3470, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-05-31.md' },
-      { id: 'report-demo-11', createdAt: '2026-06-30T20:00:00.000Z', score: 75, netWorth: 64500, dividends: 3605, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-06-30.md' },
-      { id: 'report-demo-12', createdAt: '2026-07-31T17:00:00.000Z', score: 77, netWorth: 70958, dividends: 3656, concentrationLabel: 'Media', filename: 'comite-inversion-family-office-2026-07-31.md' }
-    ],
-    settings: migrateSettings(raw.settings),
-    tableSorts: migrateTableSorts(raw.tableSorts),
-    lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null,
-    lastTransactionsImport: raw.lastTransactionsImport || null,
-    theme: raw.theme === 'dark' ? 'dark' : 'light'
-  };
+function defaultOptionPosition() {
+  return { id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, underlying: '', ticker: '', isin: '', optionType: 'put', strategy: 'cash-secured-put', objective: 'acquire', openedAt: new Date().toISOString().slice(0, 10), expiration: '', strike: null, contracts: 1, multiplier: 100, premiumPerShare: null, fees: 0, collateral: null, status: 'open', thesis: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
 }
-function cloneSnapshot() {
-  return JSON.parse(JSON.stringify({ portfolio: state.portfolio, transactions: state.transactions, options: state.options, recommendations: state.recommendations, decisionReviews: state.decisionReviews, advisor: state.advisor, history: state.history, assets: state.assets, liabilities: state.liabilities, reportHistory: state.reportHistory, settings: state.settings, lastImport: state.lastImport, lastTransactionsImport: state.lastTransactionsImport, lastBackupAt: state.lastBackupAt }));
+function migrateOptionPosition(option) {
+  if (!option || typeof option !== 'object') return null;
+  const optionType = cleanText(option.optionType).toLowerCase() === 'call' ? 'call' : 'put';
+  const statusValue = cleanText(option.status).toLowerCase();
+  const status = ['closed', 'expired', 'assigned', 'rolled'].includes(statusValue) ? statusValue : 'open';
+  return { ...defaultOptionPosition(), ...option, id: cleanText(option.id) || `opt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, underlying: cleanText(option.underlying), ticker: cleanText(option.ticker).toUpperCase(), isin: normalizeIsin(option.isin) || cleanText(option.isin).toUpperCase(), optionType, strategy: cleanText(option.strategy) || 'cash-secured-put', objective: cleanText(option.objective) || 'acquire', openedAt: normalizeDate(option.openedAt) || cleanText(option.openedAt), expiration: normalizeDate(option.expiration) || cleanText(option.expiration), strike: toNum(option.strike, null), contracts: toNum(option.contracts, 1) || 1, multiplier: toNum(option.multiplier, 100) || 100, premiumPerShare: toNum(option.premiumPerShare, null), fees: toNum(option.fees, 0) || 0, collateral: toNum(option.collateral, null), status, thesis: cleanText(option.thesis), createdAt: option.createdAt || new Date().toISOString(), updatedAt: option.updatedAt || new Date().toISOString() };
 }
 function optionDerived(option) {
   const contracts = option.contracts || 0;
@@ -1492,6 +1501,88 @@ function optionsSummary() {
   const expiringSoon = open.filter(option => option.expiration && (new Date(option.expiration) - new Date()) / 86400000 <= 45).sort((a, b) => new Date(a.expiration) - new Date(b.expiration));
   const assignedPotential = open.filter(option => option.optionType === 'put').reduce((sum, option) => sum + ((option.strike || 0) * (option.contracts || 0) * (option.multiplier || 100)), 0);
   return { open, totalCollateral, totalPremium, openPremium, expiringSoon, assignedPotential };
+}
+function transactionRowsData() {
+  return sortRows(state.transactions, 'transactions');
+}
+function transactionAnalytics(transactions) {
+  const now = Date.now();
+  const yearAgo = now - 365 * 86400000;
+  const sixMonthsAgo = now - 182 * 86400000;
+  const sumSide = (list, side) => list.filter(tx => tx.type === side).reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const sumCosts = list => list.reduce((sum, tx) => sum + (tx.costs || 0), 0);
+  const buildTotals = list => { const buyAmount = sumSide(list, 'BUY'); const sellAmount = sumSide(list, 'SELL'); return { buyAmount, sellAmount, costs: sumCosts(list), netAmount: buyAmount - sellAmount }; };
+  const last12 = transactions.filter(tx => new Date(tx.datetime).getTime() >= yearAgo);
+  const last6 = transactions.filter(tx => new Date(tx.datetime).getTime() >= sixMonthsAgo);
+  const chronological = [...transactions].sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+  const lots = new Map();
+  let realized = 0;
+  chronological.forEach(tx => {
+    const key = tx.isin || tx.symbol;
+    if (!key || !tx.quantity) return;
+    const lot = lots.get(key) || { quantity: 0, cost: 0 };
+    if (tx.type === 'BUY') {
+      lot.quantity += tx.quantity;
+      lot.cost += (tx.amount || 0) + (tx.costs || 0);
+    } else {
+      const avgCost = lot.quantity > 0 ? lot.cost / lot.quantity : 0;
+      const soldQuantity = Math.min(tx.quantity, lot.quantity);
+      realized += ((tx.amount || 0) - (tx.costs || 0)) - (avgCost * soldQuantity);
+      lot.cost = Math.max(0, lot.cost - (avgCost * soldQuantity));
+      lot.quantity = Math.max(0, lot.quantity - soldQuantity);
+    }
+    lots.set(key, lot);
+  });
+  return { allTotals: buildTotals(transactions), lastTwelveMonths: buildTotals(last12), monthlyBuys: sumSide(last6, 'BUY') / 6, realized };
+}
+function transactionHighlights(transactions) {
+  const byKey = new Map();
+  transactions.forEach(tx => {
+    const key = tx.isin || tx.symbol;
+    if (!key) return;
+    const entry = byKey.get(key) || { name: tx.name || tx.symbol, buyAmount: 0, sellAmount: 0, count: 0 };
+    if (tx.type === 'SELL') entry.sellAmount += tx.amount || 0; else entry.buyAmount += tx.amount || 0;
+    entry.count += 1;
+    byKey.set(key, entry);
+  });
+  const rows = [...byKey.values()].map(entry => ({ ...entry, net: entry.buyAmount - entry.sellAmount }));
+  const topBuys = rows.filter(r => r.net > 0).sort((a, b) => b.net - a.net).slice(0, 3);
+  const topReductions = rows.filter(r => r.net < 0).sort((a, b) => a.net - b.net).slice(0, 3);
+  return { topBuys, topReductions };
+}
+function renderTransactions() {
+  const rowsNode = $('#transactionRows');
+  if (!rowsNode) return;
+  const transactions = transactionRowsData();
+  rowsNode.innerHTML = transactions.length ? transactions.map(tx => `<tr><td>${dateEs(tx.date)}</td><td>${tx.type === 'SELL' ? 'Venta' : 'Compra'}</td><td class="company-cell"><strong>${escapeHtml(tx.name)}</strong><small>${escapeHtml(tx.symbol)} | ${escapeHtml(tx.isin || 'Sin ISIN')}</small></td><td>${tx.quantity === null ? '-' : num.format(tx.quantity)}</td><td>${formatCurrency(tx.price, tx.currency)}</td><td>${formatCurrency(tx.amount, tx.currency)}</td><td>${formatCurrency(tx.costs, tx.currency)}</td><td>${escapeHtml(tx.portfolio || '-')}</td></tr>`).join('') : '<tr><td colspan="8" class="empty-cell">Importa el CSV de transacciones.</td></tr>';
+  const analytics = transactionAnalytics(transactions);
+  const netCapitalNode = $('#txNetCapital');
+  if (netCapitalNode) {
+    netCapitalNode.textContent = eur.format(analytics.lastTwelveMonths.netAmount);
+    $('#txCapitalMeta').textContent = transactions.length ? `Ritmo medio de compra 6m: ${eur.format(analytics.monthlyBuys)}/mes` : 'Sin operaciones importadas.';
+    $('#txFriction').textContent = eur.format(analytics.allTotals.costs);
+    $('#txFrictionMeta').textContent = `Sobre ${transactions.length} operaciones importadas.`;
+    $('#txRealized').textContent = eur.format(analytics.realized);
+    $('#txRealizedMeta').textContent = analytics.realized >= 0 ? 'Ventas con plusvalia neta estimada.' : 'Ventas con minusvalia neta estimada.';
+  }
+  const highlights = transactionHighlights(transactions);
+  const decisionNode = $('#txDecisionRows');
+  if (decisionNode) {
+    const rows = [];
+    if (highlights.topBuys[0]) rows.push({ tone: 'good', title: 'Mayor conviccion', detail: `${highlights.topBuys[0].name}: ${eur.format(highlights.topBuys[0].net)} netos comprados.` });
+    if (highlights.topReductions[0]) rows.push({ tone: 'warn', title: 'Mayor reduccion', detail: `${highlights.topReductions[0].name}: ${eur.format(Math.abs(highlights.topReductions[0].net))} netos vendidos.` });
+    if (transactions.length) rows.push({ tone: 'good', title: 'Cadencia', detail: `${transactions.length} operaciones importadas, ${eur.format(analytics.allTotals.costs)} en costes acumulados.` });
+    decisionNode.className = rows.length ? 'signal-list' : 'signal-list empty-state';
+    decisionNode.innerHTML = rows.length ? rows.map(row => `<div class="signal-row signal-${row.tone}"><strong>${escapeHtml(row.title)}</strong><span>${escapeHtml(row.detail)}</span></div>`).join('') : 'Importa transacciones para ver patrones de decision.';
+  }
+  const highlightsNode = $('#txHighlights');
+  if (highlightsNode) {
+    const lines = [];
+    if (highlights.topBuys.length) lines.push('<strong>Top compras netas</strong>', ...highlights.topBuys.map(item => `<small>${escapeHtml(item.name)}: ${eur.format(item.net)}</small>`));
+    if (highlights.topReductions.length) lines.push('<strong>Top reducciones</strong>', ...highlights.topReductions.map(item => `<small>${escapeHtml(item.name)}: ${eur.format(Math.abs(item.net))}</small>`));
+    highlightsNode.className = lines.length ? 'summary-stack' : 'summary-stack empty-state';
+    highlightsNode.innerHTML = lines.length ? lines.join('') : 'Sin transacciones importadas.';
+  }
 }
 function computeDividendTrend() {
   const chronological = [...state.history].sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -1526,23 +1617,6 @@ function advisorSignals() {
   ];
   return { signals, liquidityAvailable, requiredLiquidity, debtRatio, options, dividendTrend };
 }
-function buildRecommendations() {
-  const { signals, liquidityAvailable, requiredLiquidity, debtRatio, options, dividendTrend } = advisorSignals();
-  const topPositions = sortedPortfolio().slice(0, 5);
-  const generated = [];
-  if (liquidityAvailable < requiredLiquidity) generated.push({ id: 'liq-buffer', title: 'Reforzar la reserva de liquidez antes de nuevas compras', category: 'Liquidez', urgency: 'Alta', explanation: 'La liquidez disponible tras descontar garantias queda por debajo del objetivo dinamico.', justification: `${eur.format(liquidityAvailable)} disponibles frente a un objetivo de ${eur.format(requiredLiquidity)}.`, impact: 'Reduce el riesgo de tension de caja durante la compra de vivienda y ante asignaciones de puts.', risk: 'Tener que frenar inversiones de forma forzada o asumir deuda menos favorable.', horizon: '1-3 meses', reviewDate: new Date(Date.now() + 30 * 86400000).toISOString() });
-  if (state.advisor.upcomingDebt > 0 && state.advisor.upcomingDebtMonths <= 12) generated.push({ id: 'mortgage-priority', title: 'Priorizar liquidez y capacidad de ahorro antes de formalizar la hipoteca', category: 'Deuda futura', urgency: state.advisor.upcomingDebtMonths <= 6 ? 'Alta' : 'Media', explanation: 'La nueva deuda futura cambia el nivel prudente de caja y la tolerancia al riesgo.', justification: `Hipoteca o deuda prevista de ${eur.format(state.advisor.upcomingDebt)} en ${state.advisor.upcomingDebtMonths} meses.`, impact: 'Mejora la flexibilidad para absorber gastos de formalizacion y reduce riesgo de vender activos.', risk: 'Asumir la deuda sin colchon suficiente y deteriorar la disciplina de inversion.', horizon: 'Hasta formalizacion', reviewDate: new Date(Date.now() + 45 * 86400000).toISOString() });
-  if (signals.find(item => item.id === 'company')?.tone === 'risk') generated.push({ id: 'top-position-freeze', title: 'Evitar ampliar las mayores posiciones hasta rebajar la concentracion', category: 'Concentracion', urgency: 'Alta', explanation: 'La posicion principal ya pesa demasiado dentro de la cartera.', justification: topPositions[0] ? `${topPositions[0].name} pesa ${formatPercent(topPositions[0].allocation || 0)}.` : 'Sin posicion principal disponible.', impact: 'Reduce el riesgo de que una sola empresa condicione el resultado del patrimonio.', risk: 'Mayor volatilidad y dependencia de pocos generadores de renta.', horizon: '3 meses', reviewDate: new Date(Date.now() + 90 * 86400000).toISOString() });
-  if (signals.find(item => item.id === 'country')?.tone !== 'good') generated.push({ id: 'international-balance', title: 'Dirigir nuevas aportaciones a paises o sectores infraponderados', category: 'Asignacion', urgency: 'Media', explanation: 'La cartera puede diversificarse mejor sin necesidad de vender posiciones existentes.', justification: `La mayor exposicion geografica sigue concentrada en ${signals.find(item => item.id === 'country')?.name || 'una zona dominante'}.`, impact: 'Mejora el equilibrio entre renta, divisa y riesgo regulatorio.', risk: 'Seguir acumulando sesgo local y dependencia de un mismo ciclo economico.', horizon: '3-6 meses', reviewDate: new Date(Date.now() + 120 * 86400000).toISOString() });
-  if (options.totalCollateral > 0) generated.push({ id: 'options-cash-check', title: 'Revisar si todas las puts abiertas serian asumibles si se asignaran hoy', category: 'Opciones', urgency: options.expiringSoon.length ? 'Alta' : 'Media', explanation: 'Las opciones abiertas consumen liquidez real y pueden aumentar la concentracion de forma brusca.', justification: `${eur.format(options.totalCollateral)} comprometidos y ${options.expiringSoon.length} vencimientos proximos.`, impact: 'Evita asignaciones incomodas o ventas forzadas de otros activos.', risk: 'Quedarte sin caja o sobreponderar empresas ya relevantes.', horizon: 'Inmediato', reviewDate: new Date(Date.now() + 21 * 86400000).toISOString() });
-  if (dividendTrend.growth12m !== null && dividendTrend.growth12m <= 0) generated.push({ id: 'dividend-review', title: 'Revisar si el crecimiento del dividendo se ha estancado frente al ultimo ano', category: 'Dividendos', urgency: 'Media', explanation: 'La renta recurrente no esta mejorando al ritmo esperado.', justification: `Crecimiento interanual estimado: ${formatPercent(dividendTrend.growth12m)}.`, impact: 'Ayuda a proteger el objetivo de independencia financiera y la calidad de la renta.', risk: 'Confiar en un progreso nominal que en realidad se esta frenando.', horizon: '1-2 meses', reviewDate: new Date(Date.now() + 60 * 86400000).toISOString() });
-  if (debtRatio > 0.5) generated.push({ id: 'leverage-discipline', title: 'Reducir el ritmo de riesgo hasta estabilizar la deuda total', category: 'Riesgo financiero', urgency: 'Alta', explanation: 'La deuda total prevista pesa demasiado sobre el patrimonio consolidado.', justification: `Ratio estimado de deuda ampliada: ${num.format(debtRatio * 100)} %.`, impact: 'Disminuye la vulnerabilidad del patrimonio a tipos, imprevistos y caidas de mercado.', risk: 'Entrar en una fase de escasa maniobrabilidad financiera.', horizon: '6-12 meses', reviewDate: new Date(Date.now() + 120 * 86400000).toISOString() });
-  const existingById = new Map((state.recommendations || []).map(item => [item.id, item]));
-  return generated.slice(0, 6).map(item => {
-    const existing = existingById.get(item.id);
-    return { ...item, status: existing?.status || 'pending', reason: existing?.reason || '', createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: existing?.decidedAt || null };
-  });
-}
 function executiveDiagnosis(recommendations) {
   const metrics = fullMetrics();
   const { liquidityAvailable, requiredLiquidity, options } = advisorSignals();
@@ -1554,54 +1628,6 @@ function executiveDiagnosis(recommendations) {
   if (recommendations.some(item => item.id === 'top-position-freeze')) lines.push('La cartera mantiene una concentracion relevante en algunas posiciones, por lo que conviene evitar ampliar las mas pesadas.');
   lines.push(`El patrimonio neto estimado es de ${eur.format(metrics.netWorth)} y los dividendos anuales de ${eur.format(metrics.dividends)}; la prioridad no es maximizar yield, sino preservar flexibilidad y calidad de decisiones.`);
   return lines;
-}
-function renderAdvisorCenter() {
-  ensureAdvisoryState();
-  const recommendationRows = $('#recommendationRows');
-  const decisionRows = $('#decisionRows');
-  const diagnosis = $('#advisorDiagnosis');
-  const priorities = $('#advisorPriorities');
-  const signalsNode = $('#advisorSignals');
-  const optionsSummaryNode = $('#advisorOptionsSummary');
-  const optionsAlertsNode = $('#advisorOptionsAlerts');
-  if (!diagnosis) return;
-  $('#advisorMinLiquidity').value = state.advisor.minimumLiquidityTarget ?? '';
-  $('#advisorUpcomingDebt').value = state.advisor.upcomingDebt ?? '';
-  $('#advisorUpcomingDebtMonths').value = state.advisor.upcomingDebtMonths ?? '';
-  $('#advisorSavingsCapacity').value = state.advisor.savingsCapacity ?? '';
-  $('#advisorEmergencyFund').value = state.advisor.emergencyFundTarget ?? '';
-  state.recommendations = buildRecommendations();
-  const { signals } = advisorSignals();
-  const options = optionsSummary();
-  diagnosis.className = 'summary-stack';
-  diagnosis.innerHTML = executiveDiagnosis(state.recommendations).map(line => `<small>${escapeHtml(line)}</small>`).join('');
-  priorities.className = state.recommendations.length ? 'scenario-list' : 'scenario-list empty-state';
-  priorities.innerHTML = state.recommendations.slice(0, 3).map(item => `<article class="priority-card"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.urgency)}</span><small>${escapeHtml(item.explanation)}</small><small>Revision: ${dateEs(String(item.reviewDate).slice(0, 10))}</small></article>`).join('') || 'Sin datos';
-  signalsNode.className = 'signal-list';
-  signalsNode.innerHTML = signals.map(signal => `<div class="signal-row signal-${signal.tone}"><strong>${escapeHtml(signal.title)}</strong><span>${escapeHtml(signal.name)}</span><small>${escapeHtml(signal.detail)}</small></div>`).join('');
-  optionsSummaryNode.className = 'summary-stack';
-  optionsSummaryNode.innerHTML = options.open.length ? [`<strong>${options.open.length} posiciones abiertas</strong>`, `<small>Garantias reservadas: ${eur.format(options.totalCollateral)}</small>`, `<small>Primas netas acumuladas: ${eur.format(options.totalPremium)}</small>`, `<small>Exposicion potencial por asignacion: ${eur.format(options.assignedPotential)}</small>`].join('') : '<small>No hay opciones abiertas registradas.</small>';
-  optionsAlertsNode.className = 'signal-list';
-  const optionAlertCards = [];
-  if (options.expiringSoon.length) optionAlertCards.push({ tone: 'warn', title: 'Vencimientos proximos', detail: `${options.expiringSoon.length} posiciones vencen en los proximos 45 dias.` });
-  if (options.totalCollateral > fullMetrics().liquidity * 0.4 && fullMetrics().liquidity > 0) optionAlertCards.push({ tone: 'risk', title: 'Liquidez comprometida', detail: 'Las garantias absorben una parte demasiado alta de la caja disponible.' });
-  if (!optionAlertCards.length) optionAlertCards.push({ tone: 'good', title: 'Opciones bajo control', detail: 'No hay alertas criticas en las posiciones registradas.' });
-  optionsAlertsNode.innerHTML = optionAlertCards.map(item => `<div class="signal-row signal-${item.tone}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div>`).join('');
-  recommendationRows.innerHTML = state.recommendations.length ? state.recommendations.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.category)}</small></td><td>${escapeHtml(item.urgency)}</td><td>${escapeHtml(item.impact)}</td><td>${escapeHtml(item.risk)}</td><td>${dateEs(String(item.reviewDate).slice(0, 10))}</td><td>${escapeHtml(item.status)}</td><td><div class="recommendation-actions"><wa-button size="small" appearance="plain" data-rec-action="accept" data-rec-id="${item.id}">Aceptar</wa-button><wa-button size="small" appearance="plain" data-rec-action="execute" data-rec-id="${item.id}">Ejecutada</wa-button><wa-button size="small" appearance="plain" data-rec-action="postpone" data-rec-id="${item.id}">Posponer</wa-button><wa-button size="small" appearance="plain" data-rec-action="discard" data-rec-id="${item.id}">Descartar</wa-button></div></td></tr>`).join('') : '<tr><td colspan="7" class="empty-cell">Sin recomendaciones todavia.</td></tr>';
-  const reviews = (state.decisionReviews || []).slice().sort((a, b) => new Date(b.decidedAt || b.createdAt) - new Date(a.decidedAt || a.createdAt));
-  decisionRows.innerHTML = reviews.length ? reviews.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.actionLabel)}</small></td><td>${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.decidedAt || item.createdAt))}</td><td>${dateEs(String(item.reviewDate || '').slice(0, 10))}</td><td>${escapeHtml(item.status)}</td><td>${escapeHtml(item.reason || 'Sin nota registrada')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Aun no hay decisiones registradas.</td></tr>';
-}
-function renderOptionsModule() {
-  const summaryNode = $('#optionSummary');
-  const rowsNode = $('#optionRows');
-  if (!summaryNode || !rowsNode) return;
-  const summary = optionsSummary();
-  summaryNode.className = 'summary-stack';
-  summaryNode.innerHTML = summary.open.length ? [`<strong>${summary.open.length} posiciones abiertas</strong>`, `<small>Garantias reservadas: ${eur.format(summary.totalCollateral)}</small>`, `<small>Primas abiertas: ${eur.format(summary.openPremium)}</small>`, `<small>Primas historicas netas: ${eur.format(summary.totalPremium)}</small>`, `<small>Vencimientos proximos: ${summary.expiringSoon.length}</small>`].join('') : '<small>Sin operaciones registradas.</small>';
-  rowsNode.innerHTML = state.options.length ? state.options.map(option => {
-    const derived = optionDerived(option);
-    return `<tr><td class="company-cell"><strong>${escapeHtml(option.underlying || option.ticker || 'Sin subyacente')}</strong><small>${escapeHtml(option.ticker || '-')} | ${escapeHtml(option.isin || 'Sin ISIN')}</small></td><td>${option.optionType === 'put' ? 'Put' : 'Call'}<br><small>${escapeHtml(option.strategy)}</small></td><td>${escapeHtml(option.objective === 'income' ? 'Prima' : 'Comprar acciones')}</td><td>${dateEs(option.expiration)}</td><td>${eur.format(derived.netPremium)}</td><td>${eur.format(derived.capitalCommitted)}</td><td>${escapeHtml(option.status)}</td><td><wa-button size="small" appearance="plain" data-delete-option="${option.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`;
-  }).join('') : '<tr><td colspan="8" class="empty-cell">No hay posiciones en opciones.</td></tr>';
 }
 function addOptionPosition(event) {
   event.preventDefault();
@@ -1652,18 +1678,6 @@ function updateAdvisorSettings() {
 }
 function recommendationActionLabel(action) {
   return action === 'accept' ? 'Aceptada' : action === 'execute' ? 'Ejecutada' : action === 'postpone' ? 'Pospuesta' : 'Descartada';
-}
-function handleRecommendationAction(action, recommendationId) {
-  const index = state.recommendations.findIndex(item => item.id === recommendationId);
-  if (index < 0) return;
-  const recommendation = state.recommendations[index];
-  const promptReason = window.prompt(`Motivo para marcar la recomendacion como ${recommendationActionLabel(action).toLowerCase()}:`, recommendation.reason || '');
-  const reason = promptReason ?? recommendation.reason ?? '';
-  state.recommendations[index] = { ...recommendation, status: action === 'accept' ? 'accepted' : action === 'execute' ? 'executed' : action === 'postpone' ? 'postponed' : 'discarded', reason, decidedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-  state.decisionReviews.unshift({ id: `decision-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, recommendationId, title: recommendation.title, actionLabel: recommendationActionLabel(action), status: state.recommendations[index].status, reason, createdAt: recommendation.createdAt, decidedAt: state.recommendations[index].decidedAt, reviewDate: new Date(Date.now() + (action === 'execute' ? 90 : 30) * 86400000).toISOString() });
-  saveState();
-  renderAdvisorCenter();
-  showNotice(`Recomendacion ${recommendationActionLabel(action).toLowerCase()}.`);
 }
 function renderDashboard() {
   const portfolio = activePortfolio();
@@ -1745,12 +1759,7 @@ document.addEventListener('click', event => {
     });
   }
 });
-saveState();
-render();
 
-const ADVISORY_STATUS_LABELS = { pending: 'Pendiente', accepted: 'Aceptada', executed: 'Ejecutada', discarded: 'Descartada', postponed: 'Pospuesta', reviewing: 'En revision', closed: 'Cerrada' };
-const ADVISORY_KIND_LABELS = { fact: 'Hecho objetivo', alert: 'Alerta automatica', estimate: 'Estimacion', recommendation: 'Recomendacion', opinion: 'Revision humana' };
-const REVIEW_PHASE_LABELS = { '3m': 'Revision 3 meses', '6m': 'Revision 6 meses', '12m': 'Revision 12 meses' };
 DEFAULT_TABLE_SORTS.options = { key: 'expiration', dir: 'asc' };
 DEFAULT_TABLE_SORTS.recommendations = { key: 'urgencyRank', dir: 'asc' };
 DEFAULT_TABLE_SORTS.decisionReviews = { key: 'reviewDate', dir: 'asc' };
@@ -1764,13 +1773,15 @@ function advisoryKindLabel(value) { return ADVISORY_KIND_LABELS[cleanText(value)
 function recommendationStatusLabel(value) { return ADVISORY_STATUS_LABELS[cleanText(value).toLowerCase()] || 'Pendiente'; }
 function reviewPhaseLabel(value) { return REVIEW_PHASE_LABELS[cleanText(value).toLowerCase()] || 'Revision'; }
 function defaultAdvisorState(settings = DEFAULT_SETTINGS) { const monthlyExpense = toNum(settings?.monthlyExpense, null); const monthlyContribution = toNum(settings?.monthlyContribution, null); return { minimumLiquidityTarget: monthlyExpense ? monthlyExpense * 6 : 15000, upcomingDebt: 0, upcomingDebtMonths: 12, savingsCapacity: monthlyContribution ?? 1000, emergencyFundTarget: monthlyExpense ? monthlyExpense * 6 : 12000 }; }
+function defaultPlanState() { return { targetType: 'fi', targetValue: null, monthlyContribution: null, monthlyExpense: null, horizonYears: 15 }; }
+function migratePlanState(raw) { const next = defaultPlanState(); if (!raw || typeof raw !== 'object') return next; return { targetType: ['fi', 'networth', 'dividends'].includes(raw.targetType) ? raw.targetType : next.targetType, targetValue: toNum(raw.targetValue, null), monthlyContribution: toNum(raw.monthlyContribution, null), monthlyExpense: toNum(raw.monthlyExpense, null), horizonYears: toNum(raw.horizonYears, next.horizonYears) || next.horizonYears }; }
 function defaultDecisionReview() { return { id: `decision-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, recommendationId: '', title: '', category: '', phase: '3m', phaseLabel: 'Revision 3 meses', actionLabel: '', status: 'pending', statusLabel: 'Pendiente', reason: '', expectedOutcome: '', actualOutcome: '', lesson: '', createdAt: new Date().toISOString(), decidedAt: '', reviewDate: '', reviewedAt: '' }; }
 function migrateRecommendation(entry) { if (!entry || typeof entry !== 'object') return null; const urgency = cleanText(entry.urgency) || 'Media'; const impact = cleanText(entry.impact) || 'Medio'; const risk = cleanText(entry.risk) || 'Medio'; const status = cleanText(entry.status).toLowerCase() || 'pending'; return { ...entry, id: cleanText(entry.id) || `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, title: cleanText(entry.title) || 'Recomendacion', category: cleanText(entry.category) || 'General', kind: cleanText(entry.kind).toLowerCase() || 'recommendation', action: cleanText(entry.action), explanation: cleanText(entry.explanation), justification: cleanText(entry.justification), impact, risk, urgency, reviewDate: normalizeDate(entry.reviewDate) || new Date().toISOString().slice(0, 10), status, statusLabel: recommendationStatusLabel(status), urgencyRank: urgencyRank(urgency), impactRank: impactRank(impact), riskRank: riskRank(risk), createdAt: entry.createdAt || new Date().toISOString(), updatedAt: entry.updatedAt || new Date().toISOString(), decidedAt: entry.decidedAt || null, reason: cleanText(entry.reason) }; }
 function migrateDecisionReview(entry) { if (!entry || typeof entry !== 'object') return null; const phase = cleanText(entry.phase).toLowerCase() || '3m'; const status = cleanText(entry.status).toLowerCase() || 'pending'; return { ...defaultDecisionReview(), ...entry, id: cleanText(entry.id) || `decision-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, recommendationId: cleanText(entry.recommendationId), title: cleanText(entry.title) || 'Decision', category: cleanText(entry.category), phase, phaseLabel: reviewPhaseLabel(phase), actionLabel: cleanText(entry.actionLabel) || 'Decision registrada', status, statusLabel: cleanText(entry.statusLabel) || recommendationStatusLabel(status), reason: cleanText(entry.reason), expectedOutcome: cleanText(entry.expectedOutcome), actualOutcome: cleanText(entry.actualOutcome), lesson: cleanText(entry.lesson), createdAt: entry.createdAt || new Date().toISOString(), decidedAt: entry.decidedAt || '', reviewDate: normalizeDate(entry.reviewDate) || '', reviewedAt: entry.reviewedAt || '' }; }
 function migrateBackup(backup) { if (!backup || typeof backup !== 'object' || !backup.snapshot) return null; return { id: backup.id || `backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, createdAt: backup.createdAt || new Date().toISOString(), reason: backup.reason || 'import', source: backup.source || null, snapshot: { portfolio: Array.isArray(backup.snapshot.portfolio) ? backup.snapshot.portfolio.map(migratePosition).filter(Boolean) : [], transactions: Array.isArray(backup.snapshot.transactions) ? backup.snapshot.transactions.map(migrateTransaction).filter(Boolean) : [], options: Array.isArray(backup.snapshot.options) ? backup.snapshot.options.map(migrateOptionPosition).filter(Boolean) : [], recommendations: Array.isArray(backup.snapshot.recommendations) ? backup.snapshot.recommendations.map(migrateRecommendation).filter(Boolean) : [], decisionReviews: Array.isArray(backup.snapshot.decisionReviews) ? backup.snapshot.decisionReviews.map(migrateDecisionReview).filter(Boolean) : [], advisor: backup.snapshot.advisor && typeof backup.snapshot.advisor === 'object' ? { ...backup.snapshot.advisor } : null, history: Array.isArray(backup.snapshot.history) ? backup.snapshot.history.map(migrateSnapshot).filter(Boolean) : [], assets: Array.isArray(backup.snapshot.assets) ? backup.snapshot.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(backup.snapshot.liabilities) ? backup.snapshot.liabilities.map(migrateLiability).filter(Boolean) : [], reportHistory: Array.isArray(backup.snapshot.reportHistory) ? backup.snapshot.reportHistory.map(migrateReportEntry).filter(Boolean) : [], settings: migrateSettings(backup.snapshot.settings), lastImport: backup.snapshot.lastImport || null, lastTransactionsImport: backup.snapshot.lastTransactionsImport || null, lastBackupAt: backup.snapshot.lastBackupAt || null } }; }
 function ensureAdvisoryState() { const defaults = defaultAdvisorState(state.settings); state.advisor = { ...defaults, ...(state.advisor && typeof state.advisor === 'object' ? state.advisor : {}) }; state.advisor.minimumLiquidityTarget = toNum(state.advisor.minimumLiquidityTarget, defaults.minimumLiquidityTarget) || 0; state.advisor.upcomingDebt = toNum(state.advisor.upcomingDebt, 0) || 0; state.advisor.upcomingDebtMonths = Math.max(0, Math.round(toNum(state.advisor.upcomingDebtMonths, 12) || 12)); state.advisor.savingsCapacity = toNum(state.advisor.savingsCapacity, state.settings?.monthlyContribution ?? defaults.savingsCapacity) || 0; state.advisor.emergencyFundTarget = toNum(state.advisor.emergencyFundTarget, defaults.emergencyFundTarget) || 0; state.options = Array.isArray(state.options) ? state.options.map(migrateOptionPosition).filter(Boolean) : []; state.recommendations = Array.isArray(state.recommendations) ? state.recommendations.map(migrateRecommendation).filter(Boolean) : []; state.decisionReviews = Array.isArray(state.decisionReviews) ? state.decisionReviews.map(migrateDecisionReview).filter(Boolean) : []; }
-function defaultState() { return { schemaVersion: SCHEMA_VERSION, portfolio: [], transactions: [], options: [], recommendations: [], decisionReviews: [], advisor: { ...defaultAdvisorState(DEFAULT_SETTINGS) }, history: [], backups: [], assets: [], liabilities: [], reportHistory: [], settings: { ...DEFAULT_SETTINGS }, tableSorts: defaultTableSorts(), lastImport: null, lastTransactionsImport: null, lastBackupAt: null, lastImportUndo: null, theme: 'light' }; }
-function migrateState(raw) { const base = defaultState(); if (!raw || typeof raw !== 'object') return base; const settings = migrateSettings(raw.settings); return { ...base, ...raw, schemaVersion: SCHEMA_VERSION, portfolio: Array.isArray(raw.portfolio) ? raw.portfolio.map(migratePosition).filter(Boolean) : [], transactions: Array.isArray(raw.transactions) ? raw.transactions.map(migrateTransaction).filter(Boolean) : [], options: Array.isArray(raw.options) ? raw.options.map(migrateOptionPosition).filter(Boolean) : [], recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.map(migrateRecommendation).filter(Boolean) : [], decisionReviews: Array.isArray(raw.decisionReviews) ? raw.decisionReviews.map(migrateDecisionReview).filter(Boolean) : [], advisor: { ...defaultAdvisorState(settings), ...(raw.advisor && typeof raw.advisor === 'object' ? raw.advisor : {}) }, history: Array.isArray(raw.history) ? raw.history.map(migrateSnapshot).filter(Boolean) : [], backups: Array.isArray(raw.backups) ? raw.backups.map(migrateBackup).filter(Boolean).slice(0, 10) : [], assets: Array.isArray(raw.assets) ? raw.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(raw.liabilities) ? raw.liabilities.map(migrateLiability).filter(Boolean) : [], reportHistory: Array.isArray(raw.reportHistory) ? raw.reportHistory.map(migrateReportEntry).filter(Boolean).slice(0, 24) : [], settings, tableSorts: migrateTableSorts(raw.tableSorts), lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null, lastTransactionsImport: raw.lastTransactionsImport || null, theme: raw.theme === 'dark' ? 'dark' : 'light' }; }
+function defaultState() { return { schemaVersion: SCHEMA_VERSION, portfolio: [], transactions: [], options: [], recommendations: [], decisionReviews: [], advisor: { ...defaultAdvisorState(DEFAULT_SETTINGS) }, plan: defaultPlanState(), history: [], backups: [], assets: [], liabilities: [], reportHistory: [], settings: { ...DEFAULT_SETTINGS }, tableSorts: defaultTableSorts(), lastImport: null, lastTransactionsImport: null, lastBackupAt: null, lastImportUndo: null, theme: 'light' }; }
+function migrateState(raw) { const base = defaultState(); if (!raw || typeof raw !== 'object') return base; const settings = migrateSettings(raw.settings); return { ...base, ...raw, schemaVersion: SCHEMA_VERSION, portfolio: Array.isArray(raw.portfolio) ? raw.portfolio.map(migratePosition).filter(Boolean) : [], transactions: Array.isArray(raw.transactions) ? raw.transactions.map(migrateTransaction).filter(Boolean) : [], options: Array.isArray(raw.options) ? raw.options.map(migrateOptionPosition).filter(Boolean) : [], recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.map(migrateRecommendation).filter(Boolean) : [], decisionReviews: Array.isArray(raw.decisionReviews) ? raw.decisionReviews.map(migrateDecisionReview).filter(Boolean) : [], advisor: { ...defaultAdvisorState(settings), ...(raw.advisor && typeof raw.advisor === 'object' ? raw.advisor : {}) }, plan: migratePlanState(raw.plan), history: Array.isArray(raw.history) ? raw.history.map(migrateSnapshot).filter(Boolean) : [], backups: Array.isArray(raw.backups) ? raw.backups.map(migrateBackup).filter(Boolean).slice(0, 10) : [], assets: Array.isArray(raw.assets) ? raw.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(raw.liabilities) ? raw.liabilities.map(migrateLiability).filter(Boolean) : [], reportHistory: Array.isArray(raw.reportHistory) ? raw.reportHistory.map(migrateReportEntry).filter(Boolean).slice(0, 24) : [], settings, tableSorts: migrateTableSorts(raw.tableSorts), lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null, lastTransactionsImport: raw.lastTransactionsImport || null, theme: raw.theme === 'dark' ? 'dark' : 'light' }; }
 function cloneSnapshot() { return JSON.parse(JSON.stringify({ portfolio: state.portfolio, transactions: state.transactions, options: state.options, recommendations: state.recommendations, decisionReviews: state.decisionReviews, advisor: state.advisor, history: state.history, assets: state.assets, liabilities: state.liabilities, reportHistory: state.reportHistory, settings: state.settings, lastImport: state.lastImport, lastTransactionsImport: state.lastTransactionsImport, lastBackupAt: state.lastBackupAt })); }
 function decisionReviewsRows() { return sortRows((state.decisionReviews || []).map(migrateDecisionReview).filter(Boolean), 'decisionReviews'); }
 function dueReviewCount() { const today = new Date().toISOString().slice(0, 10); return decisionReviewsRows().filter(item => item.reviewDate && item.reviewDate <= today && ['pending', 'reviewing'].includes(item.status)).length; }
@@ -1779,7 +1790,7 @@ function renderAdvisorCenter() { ensureAdvisoryState(); const recommendationRows
 function renderOptionsModule() { const summaryNode = $('#optionSummary'); const rowsNode = $('#optionRows'); if (!summaryNode || !rowsNode) return; const summary = optionsSummary(); summaryNode.className = 'summary-stack'; summaryNode.innerHTML = summary.open.length ? [`<strong>${summary.open.length} posiciones abiertas</strong>`, `<small>Garantias reservadas: ${eur.format(summary.totalCollateral)}</small>`, `<small>Primas abiertas: ${eur.format(summary.openPremium)}</small>`, `<small>Primas historicas netas: ${eur.format(summary.totalPremium)}</small>`, `<small>Vencimientos proximos: ${summary.expiringSoon.length}</small>`].join('') : '<small>Sin operaciones registradas.</small>'; const rows = sortRows(state.options.map(option => { const derived = optionDerived(option); return { ...option, netPremium: derived.netPremium, capitalCommitted: derived.capitalCommitted }; }), 'options'); rowsNode.innerHTML = rows.length ? rows.map(option => { const derived = optionDerived(option); return `<tr><td class="company-cell"><strong>${escapeHtml(option.underlying || option.ticker || 'Sin subyacente')}</strong><small>${escapeHtml(option.ticker || '-')} | ${escapeHtml(option.isin || 'Sin ISIN')}</small></td><td>${option.optionType === 'put' ? 'Put' : 'Call'}<br><small>${escapeHtml(option.strategy)}</small></td><td>${escapeHtml(option.objective === 'income' ? 'Prima' : 'Comprar acciones')}<br><small>Entrada efectiva ${derived.effectiveEntry === null ? '-' : eur.format(derived.effectiveEntry)}</small></td><td>${dateEs(option.expiration)}</td><td>${eur.format(derived.netPremium)}</td><td>${eur.format(derived.capitalCommitted)}</td><td>${escapeHtml(option.status)}</td><td><wa-button size="small" appearance="plain" data-delete-option="${option.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`; }).join('') : '<tr><td colspan="8" class="empty-cell">No hay posiciones en opciones.</td></tr>'; }
 function reviewCheckpointsForRecommendation(recommendation, actionLabel, status, reason) { const decidedAt = new Date().toISOString(); return [{ phase: '3m', days: 90 }, { phase: '6m', days: 180 }, { phase: '12m', days: 365 }].map(checkpoint => migrateDecisionReview({ recommendationId: recommendation.id, title: recommendation.title, category: recommendation.category, phase: checkpoint.phase, actionLabel, status: ['accepted', 'executed'].includes(status) ? 'pending' : status, reason, expectedOutcome: recommendation.action || recommendation.impact, lesson: '', createdAt: recommendation.createdAt || decidedAt, decidedAt, reviewDate: new Date(Date.now() + checkpoint.days * 86400000).toISOString() })); }
 function handleRecommendationAction(action, recommendationId) { const index = state.recommendations.findIndex(item => item.id === recommendationId); if (index < 0) return; const recommendation = state.recommendations[index]; const promptReason = window.prompt(`Motivo para marcar la recomendacion como ${recommendationActionLabel(action).toLowerCase()}:`, recommendation.reason || ''); const reason = promptReason ?? recommendation.reason ?? ''; const nextStatus = action === 'accept' ? 'accepted' : action === 'execute' ? 'executed' : action === 'postpone' ? 'postponed' : 'discarded'; state.recommendations[index] = migrateRecommendation({ ...recommendation, status: nextStatus, reason, decidedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); state.decisionReviews = [...reviewCheckpointsForRecommendation(recommendation, recommendationActionLabel(action), nextStatus, reason), ...(state.decisionReviews || []).filter(item => item.recommendationId !== recommendationId)].map(migrateDecisionReview); saveState(); renderAdvisorCenter(); renderSortableHeaders(); showNotice(`Recomendacion ${recommendationActionLabel(action).toLowerCase()}.`); }
-function undoLastImportLatest() { if (!state.lastImportUndo?.snapshot) { showNotice('No hay ninguna importacion que deshacer.'); return; } const snapshot = state.lastImportUndo.snapshot; state.portfolio = (snapshot.portfolio || []).map(migratePosition).filter(Boolean); state.transactions = (snapshot.transactions || []).map(migrateTransaction).filter(Boolean); state.options = (snapshot.options || []).map(migrateOptionPosition).filter(Boolean); state.recommendations = (snapshot.recommendations || []).map(migrateRecommendation).filter(Boolean); state.decisionReviews = (snapshot.decisionReviews || []).map(migrateDecisionReview).filter(Boolean); state.advisor = { ...defaultAdvisorState(snapshot.settings || DEFAULT_SETTINGS), ...(snapshot.advisor || {}) }; state.history = (snapshot.history || []).map(migrateSnapshot).filter(Boolean); state.assets = (snapshot.assets || []).map(migrateAsset).filter(Boolean); state.liabilities = (snapshot.liabilities || []).map(migrateLiability).filter(Boolean); state.reportHistory = (snapshot.reportHistory || []).map(migrateReportEntry).filter(Boolean); state.settings = migrateSettings(snapshot.settings); state.lastImport = snapshot.lastImport || null; state.lastTransactionsImport = snapshot.lastTransactionsImport || null; state.lastBackupAt = snapshot.lastBackupAt || null; state.lastImportUndo = null; saveState(); render(); showNotice('Se ha restaurado la copia previa a la ultima importacion.'); }
+function undoLastImport() { if (!state.lastImportUndo?.snapshot) { showNotice('No hay ninguna importacion que deshacer.'); return; } const snapshot = state.lastImportUndo.snapshot; state.portfolio = (snapshot.portfolio || []).map(migratePosition).filter(Boolean); state.transactions = (snapshot.transactions || []).map(migrateTransaction).filter(Boolean); state.options = (snapshot.options || []).map(migrateOptionPosition).filter(Boolean); state.recommendations = (snapshot.recommendations || []).map(migrateRecommendation).filter(Boolean); state.decisionReviews = (snapshot.decisionReviews || []).map(migrateDecisionReview).filter(Boolean); state.advisor = { ...defaultAdvisorState(snapshot.settings || DEFAULT_SETTINGS), ...(snapshot.advisor || {}) }; state.history = (snapshot.history || []).map(migrateSnapshot).filter(Boolean); state.assets = (snapshot.assets || []).map(migrateAsset).filter(Boolean); state.liabilities = (snapshot.liabilities || []).map(migrateLiability).filter(Boolean); state.reportHistory = (snapshot.reportHistory || []).map(migrateReportEntry).filter(Boolean); state.settings = migrateSettings(snapshot.settings); state.lastImport = snapshot.lastImport || null; state.lastTransactionsImport = snapshot.lastTransactionsImport || null; state.lastBackupAt = snapshot.lastBackupAt || null; state.lastImportUndo = null; saveState(); render(); showNotice('Se ha restaurado la copia previa a la ultima importacion.'); }
 function buildPortfolioDataMarkdown() { const portfolio = sortedPortfolio(activePortfolio()); const metrics = fullMetrics(portfolio); const sector = groupByValue(portfolio, 'sector', metrics.value); const country = groupByValue(portfolio, 'country', metrics.value); const score = portfolioScore(portfolio); const signals = concentrationSignals(portfolio); const scenarios = independenceScenarios(metrics); const transactions = transactionRowsData(); const txAnalytics = transactionAnalytics(transactions); const options = optionsSummary(); const recommendations = buildRecommendations(); const reviews = decisionReviewsRows(); return ['# Datos patrimoniales exportados', '', `Fecha del informe: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'long' }).format(new Date())}`, '', '## Resumen patrimonial', `- Valor de cartera: ${eur.format(metrics.value)}`, `- Coste invertido: ${eur.format(metrics.cost)}`, `- Plusvalia: ${eur.format(metrics.gain)}`, `- Dividendos anuales estimados: ${eur.format(metrics.dividends)}`, `- Liquidez registrada: ${eur.format(metrics.liquidity)}`, `- Liquidez util tras garantias: ${eur.format(Math.max(0, metrics.liquidity - options.totalCollateral))}`, `- Otros activos: ${eur.format(metrics.otherAssets)}`, `- Deuda total: ${eur.format(metrics.liabilities)}`, `- Patrimonio neto: ${eur.format(metrics.netWorth)}`, '', '## Salud de la cartera', `- Puntuacion global: ${score.value}/100 (${score.label})`, ...signals.map(signal => `- Concentracion ${signal.title.toLowerCase()}: ${signal.name} con ${pct.format(signal.weight)} (${signal.label})`), '', '## Objetivos financieros', `- Gasto mensual objetivo: ${state.settings.monthlyExpense === null ? 'No configurado' : eur.format(state.settings.monthlyExpense)}`, `- Objetivo anual de dividendos: ${state.settings.targetAnnualDividends === null ? 'No configurado' : eur.format(state.settings.targetAnnualDividends)}`, `- Objetivo de patrimonio neto: ${state.settings.targetNetWorth === null ? 'No configurado' : eur.format(state.settings.targetNetWorth)}`, `- Aportacion mensual prevista: ${state.settings.monthlyContribution === null ? 'No configurada' : eur.format(state.settings.monthlyContribution)}`, '', '## Escenarios de independencia financiera', ...(scenarios ? scenarios.map(s => `- ${s.label}: ${s.years === null ? 'mas de 40 anos' : `${s.years} anos`} | meta estimada ${s.eta}`) : ['- Configura el gasto mensual para obtener escenarios.']), '', '## Cambios frente al cierre anterior', ...reportDeltaSection(), '', '## Actividad de capital y transacciones', `- Operaciones importadas: ${transactions.length}`, `- Compras netas 12m: ${eur.format(txAnalytics.lastTwelveMonths.netAmount)}`, `- Comisiones e impuestos acumulados: ${eur.format(txAnalytics.allTotals.costs)}`, `- Plusvalia realizada estimada: ${eur.format(txAnalytics.realized)}`, `- Ritmo medio de compras 6m: ${eur.format(txAnalytics.monthlyBuys)}`, '', '## Operativa con opciones', `- Posiciones abiertas: ${options.open.length}`, `- Garantias reservadas: ${eur.format(options.totalCollateral)}`, `- Primas netas acumuladas: ${eur.format(options.totalPremium)}`, `- Exposicion potencial por asignacion: ${eur.format(options.assignedPotential)}`, `- Vencimientos proximos: ${options.expiringSoon.length}`, ...options.open.slice(0, 10).map(option => { const derived = optionDerived(option); return `- ${option.underlying || option.ticker}: ${option.optionType} ${dateEs(option.expiration)} | prima ${eur.format(derived.netPremium)} | capital ${eur.format(derived.capitalCommitted)} | entrada efectiva ${derived.effectiveEntry === null ? '-' : eur.format(derived.effectiveEntry)}`; }), '', '## Recomendaciones priorizadas', ...(recommendations.length ? recommendations.map(item => `- [${advisoryKindLabel(item.kind)}] ${item.title} | urgencia ${item.urgency} | impacto ${item.impact} | revisar ${dateEs(String(item.reviewDate).slice(0, 10))} | accion: ${item.action}`) : ['- No hay recomendaciones activas.']), '', '## Seguimiento de decisiones', ...(reviews.length ? reviews.slice(0, 12).map(item => `- ${item.phaseLabel} | ${item.title} | estado ${item.statusLabel} | revision ${dateEs(String(item.reviewDate || '').slice(0, 10))} | esperado: ${item.expectedOutcome || '-'} | observado: ${item.actualOutcome || '-'} | aprendizaje: ${item.lesson || '-'}`) : ['- No hay revisiones registradas.']), '', '## Cartera', '| Empresa | Ticker | ISIN | Valor | Peso | Dividendo anual | Yield | YOC | Estado |', '|---|---|---|---:|---:|---:|---:|---:|---|', ...portfolio.map(position => `| ${position.name.replaceAll('|', '/')} | ${position.symbol} | ${position.isin} | ${eur.format(position.marketValue || 0)} | ${formatPercent(position.allocation)} | ${eur.format(position.annualDividend || 0)} | ${formatPercent(position.dividendYield)} | ${formatPercent(position.yieldOnCost)} | ${position.status} |`), '', '## Distribucion por sectores', ...sector.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`), '', '## Distribucion geografica', ...country.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`), '', '## Liquidez, activos y deuda', ...state.assets.map(asset => `- Activo ${asset.name} (${asset.type}): ${eur.format(asset.value || 0)}`), ...state.liabilities.map(liability => `- Deuda ${liability.name} (${liability.type}): ${eur.format(liability.value || 0)}`), '', '## Historico de informes registrados', ...recentReportSummary(), '', '## Comentarios personales', '- Exportado desde la aplicacion local-first. Los datos permanecen en el dispositivo.'].join('\n'); }
 async function markdown() { const portfolio = sortedPortfolio(activePortfolio()); const metrics = fullMetrics(portfolio); const score = portfolioScore(portfolio); const filename = `comite-inversion-family-office-${new Date().toISOString().slice(0, 10)}.md`; const promptTemplate = await loadAnalysisPromptTemplate(); const dataBlock = buildPortfolioDataMarkdown(); const finalDocument = mergePromptWithData(promptTemplate, dataBlock); download(filename, finalDocument, 'text/markdown'); saveReportHistoryEntry({ ...defaultReportEntry(), createdAt: new Date().toISOString(), score: score.value, netWorth: metrics.netWorth, dividends: metrics.dividends, concentrationLabel: score.concentrationLabel, filename }); saveState(); renderReportHistory(); showNotice('Informe generado con prompt editable y registrado en el historico.'); }
 ensureAdvisoryState();
