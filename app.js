@@ -752,8 +752,22 @@ function renderPlan() {
   const valueInput = $('#planTargetValue');
   if (valueInput) {
     valueInput.value = formatInputNumber(state.plan.targetValue);
-    const valueHints = { fi: 'Gasto anual a cubrir con dividendos (EUR/año). Vacío = 12x tu gasto mensual.', networth: 'Patrimonio neto total a alcanzar (EUR totales, no mensual).', dividends: 'Dividendos brutos anuales objetivo (EUR/año).' };
-    valueInput.setAttribute('hint', valueHints[state.plan.targetType] || valueHints.fi);
+    const monthlyExpenseForFallback = state.plan.monthlyExpense ?? state.settings.monthlyExpense;
+    const fallbackByType = {
+      fi: monthlyExpenseForFallback ? monthlyExpenseForFallback * 12 : null,
+      networth: state.settings.targetNetWorth,
+      dividends: state.settings.targetAnnualDividends
+    };
+    const fallback = fallbackByType[state.plan.targetType];
+    const labelByType = { fi: 'Valor objetivo — gasto anual a cubrir (EUR/año)', networth: 'Valor objetivo — patrimonio neto (EUR totales)', dividends: 'Valor objetivo — dividendos anuales (EUR/año)' };
+    const hintByType = {
+      fi: fallback !== null ? `Vacío = automático: ${eur.format(fallback)} (12 × tu gasto mensual).` : 'Gasto anual a cubrir con dividendos. Configura tu gasto mensual para calcularlo automáticamente.',
+      networth: fallback !== null ? `Vacío = usa tu objetivo guardado en Datos: ${eur.format(fallback)}.` : 'Patrimonio neto total a alcanzar (EUR totales, no mensual).',
+      dividends: fallback !== null ? `Vacío = usa tu objetivo guardado en Datos: ${eur.format(fallback)}.` : 'Dividendos brutos anuales objetivo (EUR/año).'
+    };
+    valueInput.setAttribute('label', labelByType[state.plan.targetType] || labelByType.fi);
+    valueInput.setAttribute('hint', hintByType[state.plan.targetType] || hintByType.fi);
+    valueInput.setAttribute('placeholder', fallback !== null ? `Automático: ${eur.format(fallback)}` : 'Sin automático disponible');
   }
   const contributionInput = $('#planMonthlyContribution');
   if (contributionInput) { contributionInput.value = formatInputNumber(state.plan.monthlyContribution); contributionInput.setAttribute('hint', 'Lo que aportas cada mes a la cartera (EUR/mes). Vacío = tu aportación configurada en Datos.'); }
