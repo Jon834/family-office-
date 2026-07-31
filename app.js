@@ -1,5 +1,5 @@
 const STORAGE_KEY = 'family-office-nunez-v2';
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const ACTIVE_STATUSES = new Set(['active', 'watch']);
 const DEFAULT_SETTINGS = {
   monthlyExpense: null,
@@ -13,7 +13,8 @@ const DEFAULT_TABLE_SORTS = {
   history: { key: 'date', dir: 'desc' },
   assets: { key: 'value', dir: 'desc' },
   liabilities: { key: 'value', dir: 'desc' },
-  reports: { key: 'createdAt', dir: 'desc' }
+  reports: { key: 'createdAt', dir: 'desc' },
+  transactions: { key: 'datetime', dir: 'desc' }
 };
 const SORTABLE_TABLES = {
   topPositions: {
@@ -96,6 +97,19 @@ SORTABLE_TABLES.reports = {
     { key: 'concentrationLabel', label: 'Concentracion', type: 'string' }
   ]
 };
+SORTABLE_TABLES.transactions = {
+  selector: '#transactionRows',
+  columns: [
+    { key: 'datetime', label: 'Fecha', type: 'date' },
+    { key: 'type', label: 'Tipo', type: 'string' },
+    { key: 'name', label: 'Empresa', type: 'string' },
+    { key: 'quantity', label: 'Cantidad', type: 'number' },
+    { key: 'price', label: 'Precio', type: 'number' },
+    { key: 'amount', label: 'Importe', type: 'number' },
+    { key: 'costs', label: 'Costes', type: 'number' },
+    { key: 'portfolio', label: 'Cartera', type: 'string' }
+  ]
+};
 
 
 const $ = selector => document.querySelector(selector);
@@ -106,6 +120,7 @@ const pct = new Intl.NumberFormat('es-ES', { style: 'percent', minimumFractionDi
 
 const state = loadState();
 let pendingImport = null;
+let pendingTransactionImport = null;
 let confirmAction = null;
 let editingPositionId = null;
 let deferredWorker = null;
@@ -115,6 +130,7 @@ function defaultState() {
   return {
     schemaVersion: SCHEMA_VERSION,
     portfolio: [],
+    transactions: [],
     history: [],
     backups: [],
     assets: [],
@@ -123,6 +139,7 @@ function defaultState() {
     settings: { ...DEFAULT_SETTINGS },
     tableSorts: defaultTableSorts(),
     lastImport: null,
+    lastTransactionsImport: null,
     lastBackupAt: null,
     lastImportUndo: null,
     theme: 'light'
@@ -171,7 +188,9 @@ function hasStoredData(snapshot) {
       snapshot.assets?.length ||
       snapshot.liabilities?.length ||
       snapshot.reportHistory?.length ||
-      snapshot.lastImport
+      snapshot.transactions?.length ||
+      snapshot.lastImport ||
+      snapshot.lastTransactionsImport
     )
   );
 }
@@ -268,6 +287,7 @@ function createDemoState() {
     settings: { monthlyExpense: 2200, targetAnnualDividends: 12000, targetNetWorth: 450000, monthlyContribution: 1500 },
     tableSorts: defaultTableSorts(),
     lastImport: '2026-07-30T17:12:00.000Z',
+    lastTransactionsImport: '2026-07-31T11:19:27.000Z',
     lastBackupAt: '2026-07-30T17:00:00.000Z',
     lastImportUndo: null,
     theme: 'light'
@@ -551,7 +571,7 @@ function parseLocaleNumber(value) {
   const text = String(value).trim();
   if (!text) return null;
   const negative = /^\(.*\)$/.test(text);
-  const normalized = Number(text.replace(/^\(|\)$/g, '').replace(/\s/g, '').replace(/�/g, '').replace(/%/g, '').replace(/\./g, '').replace(',', '.'));
+  const normalized = Number(text.replace(/^\(|\)$/g, '').replace(/\s/g, '').replace(/[€$£]/g, '').replace(/%/g, '').replace(/\./g, '').replace(',', '.'));
   return Number.isFinite(normalized) ? (negative ? -normalized : normalized) : null;
 }
 
@@ -580,9 +600,9 @@ function normalizeFrequency(value) { if (value === null || value === undefined |
 function normalizeDate(value) { const text = cleanText(value); if (!text) return ''; if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text; const match = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/); if (match) { const [, day, month, year] = match; const fullYear = year.length === 2 ? `20${year}` : year; return `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`; } const date = new Date(text); return Number.isNaN(date.valueOf()) ? '' : date.toISOString().slice(0, 10); }
 function normalizeIsin(value) { const text = cleanText(value).toUpperCase().replace(/\s/g, ''); return /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(text) ? text : ''; }
 function buildFallbackKey(symbol, name) { const s = cleanText(symbol).toUpperCase(); const n = cleanText(name).toLowerCase(); return s || n ? `${s}|${n}` : ''; }
-function dateEs(value) { if (!value) return '�'; const date = new Date(`${value}T12:00:00`); return Number.isNaN(date.valueOf()) ? '�' : new Intl.DateTimeFormat('es-ES').format(date); }
-function formatPercent(value) { return value === null || value === undefined ? '�' : pct.format(value); }
-function formatCurrency(value, currency = 'EUR') { if (value === null || value === undefined) return '�'; return new Intl.NumberFormat('es-ES', { style: 'currency', currency, maximumFractionDigits: 2 }).format(value); }
+function dateEs(value) { if (!value) return '-'; const date = new Date(`${value}T12:00:00`); return Number.isNaN(date.valueOf()) ? '-' : new Intl.DateTimeFormat('es-ES').format(date); }
+function formatPercent(value) { return value === null || value === undefined ? '-' : pct.format(value); }
+function formatCurrency(value, currency = 'EUR') { if (value === null || value === undefined) return '-'; return new Intl.NumberFormat('es-ES', { style: 'currency', currency, maximumFractionDigits: 2 }).format(value); }
 function relativeDelta(current, previous) { if (!previous) return null; return (current - previous) / previous; }
 function activePortfolio(list = state.portfolio) { return list.filter(position => ACTIVE_STATUSES.has(normalizeStatus(position.status))); }
 function sortedPortfolio(list = activePortfolio()) { return [...list].sort((a, b) => (b.marketValue || 0) - (a.marketValue || 0)); }
@@ -596,10 +616,10 @@ function concentrationSignals(portfolio = activePortfolio()) {
   const metrics = totals(portfolio);
   if (!metrics.value || !portfolio.length) return [];
   const topPosition = sortedPortfolio(portfolio)[0];
-  const topCountry = groupByValue(portfolio, 'country', metrics.value)[0] || { name: '�', weight: 0 };
-  const topSector = groupByValue(portfolio, 'sector', metrics.value)[0] || { name: '�', weight: 0 };
+  const topCountry = groupByValue(portfolio, 'country', metrics.value)[0] || { name: 'Sin dato', weight: 0 };
+  const topSector = groupByValue(portfolio, 'sector', metrics.value)[0] || { name: 'Sin dato', weight: 0 };
   const signals = [
-    { title: 'Empresa', name: topPosition?.name || '�', weight: topPosition ? (topPosition.marketValue || 0) / metrics.value : 0, ...concentrationState(topPosition ? (topPosition.marketValue || 0) / metrics.value : 0, 0.12, 0.2) },
+    { title: 'Empresa', name: topPosition?.name || 'Sin dato', weight: topPosition ? (topPosition.marketValue || 0) / metrics.value : 0, ...concentrationState(topPosition ? (topPosition.marketValue || 0) / metrics.value : 0, 0.12, 0.2) },
     { title: 'Pais', name: topCountry.name, weight: topCountry.weight, ...concentrationState(topCountry.weight, 0.25, 0.4) },
     { title: 'Sector', name: topSector.name, weight: topSector.weight, ...concentrationState(topSector.weight, 0.2, 0.35) }
   ];
@@ -687,7 +707,7 @@ function renderDashboard() {
   $('#liquidityMeta').textContent = `Otros activos: ${eur.format(metrics.otherAssets)}`;
   $('#debtValue').textContent = eur.format(metrics.liabilities);
   $('#debtMeta').textContent = lastSnapshot ? `Ultimo cierre: ${eur.format(lastSnapshot.debt || 0)}` : 'Sin cierre mensual todavia.';
-  $('#goalValue').textContent = metrics.dividendGoalProgress === null ? '�' : pct.format(Math.min(metrics.dividendGoalProgress, 9.99));
+  $('#goalValue').textContent = metrics.dividendGoalProgress === null ? '--' : pct.format(Math.min(metrics.dividendGoalProgress, 9.99));
   $('#goalMeta').textContent = state.settings.targetAnnualDividends ? `Objetivo: ${eur.format(state.settings.targetAnnualDividends)}` : 'Configura un objetivo anual de dividendos.';
   $('#snapshotDelta').textContent = lastSnapshot && previousSnapshot ? `Variacion vs. cierre anterior: ${formatPercent(relativeDelta(lastSnapshot.netWorth || 0, previousSnapshot.netWorth || 0))}` : 'Necesitas al menos dos cierres para ver variaciones.';
   $('#latestSnapshot').textContent = lastSnapshot ? `Ultimo cierre: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(lastSnapshot.date))} | Patrimonio neto ${eur.format(lastSnapshot.netWorth || 0)}` : 'Todavia no hay cierres mensuales.';
@@ -697,7 +717,7 @@ function renderDashboard() {
   $('#concentrationRows').className = signals.length ? 'signal-list' : 'signal-list empty-state';
   $('#concentrationRows').innerHTML = signals.length ? signals.map(signal => `<div class="signal-row signal-${signal.tone}"><strong>${signal.title}</strong><span>${escapeHtml(signal.name)}</span><small>${formatPercent(signal.weight)} | ${signal.label}</small></div>`).join('') : 'Sin datos';
   $('#fiGoalStatus').textContent = scenarios ? `Objetivo anual: ${eur.format(scenarios[0].target)} | progreso actual ${pct.format(Math.min(scenarios[0].progress, 9.99))}` : 'Configura tu gasto mensual para ver escenarios.';
-  $('#fiGoalMeta').textContent = scenarios ? `Aportacion mensual considerada: ${state.settings.monthlyContribution === null ? '0 �' : eur.format(state.settings.monthlyContribution)}` : 'Se calcula con dividendos actuales, aportacion mensual y tres supuestos de crecimiento.';
+  $('#fiGoalMeta').textContent = scenarios ? `Aportacion mensual considerada: ${state.settings.monthlyContribution === null ? eur.format(0) : eur.format(state.settings.monthlyContribution)}` : 'Se calcula con dividendos actuales, aportacion mensual y tres supuestos de crecimiento.';
   const fiRows = $('#fiRows');
   if (!scenarios) { fiRows.className = 'scenario-list empty-state'; fiRows.textContent = 'Sin datos'; }
   else { fiRows.className = 'scenario-list'; fiRows.innerHTML = scenarios.map(s => `<div class="scenario-card"><strong>${s.label}</strong><span>${s.status}</span><small>${s.years === null ? 'Mas de 40 anos' : `${s.years} anos`}</small><small>Meta estimada: ${s.eta}</small></div>`).join(''); }
@@ -709,15 +729,181 @@ function renderDashboard() {
 function renderBars(selector, data) { const element = $(selector); if (!data.length) { element.className = 'bar-chart empty-state'; element.textContent = 'Sin datos'; return; } const max = data[0].value || 1; element.className = 'bar-chart'; element.innerHTML = data.map(item => `<div class="bar-row"><span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, (item.value / max) * 100)}%"></div></div><span class="bar-value">${pct.format(item.weight)}</span></div>`).join(''); }
 function portfolioFilters() { return { query: ($('#searchInput')?.value || '').toLowerCase(), sector: $('#sectorFilter')?.value || '', country: $('#countryFilter')?.value || '', currency: $('#currencyFilter')?.value || '', status: $('#statusFilter')?.value || 'active' }; }
 function filteredPortfolio() { const { query, sector, country, currency, status } = portfolioFilters(); const rows = state.portfolio.filter(position => { const haystack = `${position.name} ${position.symbol} ${position.isin}`.toLowerCase(); const positionStatus = normalizeStatus(position.status); const statusOk = status === 'all' ? true : positionStatus === status; return (!query || haystack.includes(query)) && (!sector || position.sector === sector) && (!country || position.country === country) && (!currency || position.currency === currency) && statusOk; }); return sortRows(rows, 'portfolio'); }
-function renderPortfolio() { const list = filteredPortfolio(); $('#portfolioRows').innerHTML = list.length ? list.map(position => `<tr><td class="company-cell"><strong>${escapeHtml(position.name)}</strong><small>${escapeHtml(position.symbol)} | ${escapeHtml(position.isin || 'Sin ISIN')}</small></td><td>${position.quantity === null ? '�' : num.format(position.quantity)}</td><td>${formatCurrency(position.averagePrice, position.currency)}</td><td>${formatCurrency(position.currentPrice, position.currency)}</td><td>${formatCurrency(position.marketValue, position.currency)}</td><td class="${(position.gain || 0) >= 0 ? 'positive' : 'negative'}">${formatCurrency(position.gain, position.currency)}<br><small>${formatPercent(position.gainPercent)}</small></td><td>${formatPercent(position.allocation)}</td><td>${formatCurrency(position.annualDividend, position.currency)}</td><td>${formatPercent(position.dividendYield)}</td><td>${formatPercent(position.yieldOnCost)}</td><td>${dateEs(position.payDate)}</td><td><wa-button size="small" appearance="plain" data-edit-position="${position.id}"><wa-icon name="pen-to-square"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="12" class="empty-cell">No hay resultados.</td></tr>'; }
+function renderPortfolio() { const list = filteredPortfolio(); $('#portfolioRows').innerHTML = list.length ? list.map(position => `<tr><td class="company-cell"><strong>${escapeHtml(position.name)}</strong><small>${escapeHtml(position.symbol)} | ${escapeHtml(position.isin || 'Sin ISIN')}</small></td><td>${position.quantity === null ? '-' : num.format(position.quantity)}</td><td>${formatCurrency(position.averagePrice, position.currency)}</td><td>${formatCurrency(position.currentPrice, position.currency)}</td><td>${formatCurrency(position.marketValue, position.currency)}</td><td class="${(position.gain || 0) >= 0 ? 'positive' : 'negative'}">${formatCurrency(position.gain, position.currency)}<br><small>${formatPercent(position.gainPercent)}</small></td><td>${formatPercent(position.allocation)}</td><td>${formatCurrency(position.annualDividend, position.currency)}</td><td>${formatPercent(position.dividendYield)}</td><td>${formatPercent(position.yieldOnCost)}</td><td>${dateEs(position.payDate)}</td><td><wa-button size="small" appearance="plain" data-edit-position="${position.id}"><wa-icon name="pen-to-square"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="12" class="empty-cell">No hay resultados.</td></tr>'; }
 function renderFilters() { [['#sectorFilter', 'sector', 'Todos'], ['#countryFilter', 'country', 'Todos'], ['#currencyFilter', 'currency', 'Todas']].forEach(([selector, field, label]) => { const element = $(selector); if (!element) return; const current = element.value || ''; const values = [...new Set(state.portfolio.map(position => position[field]).filter(Boolean))].sort(); element.innerHTML = `<wa-option value="">${label}</wa-option>` + values.map(value => `<wa-option value="${escapeHtml(value)}">${escapeHtml(value)}</wa-option>`).join(''); element.value = values.includes(current) ? current : ''; }); }
-function renderHistory() { const rows = sortRows(state.history, 'history'); $('#historyRows').innerHTML = rows.length ? rows.map(snapshot => `<tr><td>${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(snapshot.date))}</td><td>${eur.format(snapshot.value)}</td><td>${eur.format(snapshot.netWorth || 0)}</td><td>${eur.format(snapshot.liquidity || 0)}</td><td>${eur.format(snapshot.debt || 0)}</td><td>${eur.format(snapshot.dividends)}</td><td>${snapshot.count}</td><td><wa-button size="small" appearance="plain" data-delete-snapshot="${snapshot.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="8" class="empty-cell">No hay cierres guardados.</td></tr>'; const chronological = [...state.history].sort((a, b) => new Date(a.date) - new Date(b.date)); const chart = $('#historyChart'); if (!chronological.length) { chart.className = 'history-chart empty-state'; chart.textContent = 'Sin cierres mensuales'; return; } const max = Math.max(...chronological.map(snapshot => snapshot.netWorth || snapshot.value), 1); chart.className = 'history-chart'; chart.innerHTML = `<div class="history-bars">${chronological.map(snapshot => `<div class="history-col"><div class="history-bar" style="height:${Math.max(3, ((snapshot.netWorth || snapshot.value) / max) * 100)}%" data-value="${eur.format(snapshot.netWorth || snapshot.value)}"></div><small>${new Intl.DateTimeFormat('es-ES', { month: 'short', year: '2-digit' }).format(new Date(snapshot.date))}</small></div>`).join('')}</div>`; }
-function renderAssets() { const rows = sortRows(state.assets, 'assets'); $('#assetRows').innerHTML = rows.length ? rows.map(asset => `<tr><td>${escapeHtml(asset.name)}</td><td>${escapeHtml(asset.type)}</td><td>${eur.format(asset.value || 0)}</td><td>${escapeHtml(asset.notes || '�')}</td><td><wa-button size="small" appearance="plain" data-delete-asset="${asset.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay activos adicionales.</td></tr>'; }
-function renderLiabilities() { const rows = sortRows(state.liabilities, 'liabilities'); $('#liabilityRows').innerHTML = rows.length ? rows.map(liability => `<tr><td>${escapeHtml(liability.name)}</td><td>${escapeHtml(liability.type)}</td><td>${eur.format(liability.value || 0)}</td><td>${escapeHtml(liability.notes || '�')}</td><td><wa-button size="small" appearance="plain" data-delete-liability="${liability.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay deudas registradas.</td></tr>'; }
+const BENCHMARK_STEPS = {
+  ibex: [0.024, 0.011, -0.016, 0.019, 0.013, 0.01, 0.022, 0.018, 0.015, 0.014, 0.011],
+  dow: [0.018, 0.009, 0.012, 0.01, 0.016, -0.005, 0.021, 0.017, 0.013, 0.012, 0.014],
+  euronext: [0.02, 0.008, -0.004, 0.014, 0.012, 0.009, 0.016, 0.015, 0.012, 0.011, 0.01]
+};
+const MACRO_REFERENCE = {
+  inflation: [3.4, 3.3, 3.1, 3.0, 2.9, 2.8, 2.7, 2.6, 2.5, 2.4, 2.3, 2.2],
+  rate: [4.0, 4.0, 3.9, 3.8, 3.7, 3.5, 3.4, 3.3, 3.15, 3.0, 2.9, 2.75]
+};
+function formatMonthTick(value) { return new Intl.DateTimeFormat('es-ES', { month: 'short', year: '2-digit' }).format(new Date(value)); }
+function referenceWindow(values, length) {
+  if (!length) return [];
+  if (values.length >= length) return values.slice(values.length - length);
+  const result = [...values];
+  while (result.length < length) result.unshift(result[0]);
+  return result;
+}
+function buildReferenceIndex(length, steps) {
+  if (!length) return [];
+  const values = [100];
+  for (let index = 1; index < length; index += 1) values.push(Number((values[index - 1] * (1 + steps[(index - 1) % steps.length])).toFixed(2)));
+  return values;
+}
+function normalizeHistorySeries(history, field) {
+  const base = history[0]?.[field] || 1;
+  return history.map(snapshot => Number((((snapshot[field] || 0) / base) * 100).toFixed(2)));
+}
+function polylinePoints(values, min, max, width, height, padding) {
+  const range = max - min || 1;
+  return values.map((value, index) => {
+    const x = padding + ((width - padding * 2) * (values.length === 1 ? 0.5 : index / (values.length - 1)));
+    const y = height - padding - (((value - min) / range) * (height - padding * 2));
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+}
+function areaPoints(values, min, max, width, height, padding) {
+  const line = polylinePoints(values, min, max, width, height, padding);
+  if (!line) return '';
+  const firstX = padding + ((width - padding * 2) * (values.length === 1 ? 0.5 : 0));
+  const lastX = padding + ((width - padding * 2) * (values.length === 1 ? 0.5 : 1));
+  const baseline = height - padding;
+  return `${firstX},${baseline} ${line} ${lastX},${baseline}`;
+}
+function pointNodes(values, min, max, width, height, padding, color) {
+  const range = max - min || 1;
+  return values.map((value, index) => {
+    const x = padding + ((width - padding * 2) * (values.length === 1 ? 0.5 : index / (values.length - 1)));
+    const y = height - padding - (((value - min) / range) * (height - padding * 2));
+    return `<circle class="chart-point" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="${color}"></circle>`;
+  }).join('');
+}
+function buildLineChart(series, labels, options = {}) {
+  if (!series.length || !labels.length) return '<div class="empty-state">Sin datos</div>';
+  const width = 640;
+  const height = 240;
+  const padding = 18;
+  const mergedValues = series.flatMap(item => item.values);
+  if (!mergedValues.length) return '<div class="empty-state">Sin datos</div>';
+  const min = Math.min(...mergedValues);
+  const max = Math.max(...mergedValues);
+  const yMarks = [0, 1, 2].map(step => min + (((max - min) || 1) * step / 2));
+  const axis = labels.map(label => `<span>${escapeHtml(label)}</span>`).join('');
+  const legend = series.map(item => `<span><i class="legend-dot" style="background:${item.color}"></i>${escapeHtml(item.label)}</span>`).join('');
+  const lines = series.map((item, index) => {
+    const area = index === 0 ? `<polygon class="chart-area" points="${areaPoints(item.values, min, max, width, height, padding)}"></polygon>` : '';
+    return `${area}<polyline class="chart-line${item.dashed ? ' secondary' : ''}" stroke="${item.color}" points="${polylinePoints(item.values, min, max, width, height, padding)}"></polyline>${pointNodes(item.values, min, max, width, height, padding, item.color)}`;
+  }).join('');
+  const gridLines = yMarks.map(value => {
+    const y = height - padding - ((((value - min) / ((max - min) || 1))) * (height - padding * 2));
+    return `<line class="chart-grid-line" x1="${padding}" y1="${y.toFixed(1)}" x2="${width - padding}" y2="${y.toFixed(1)}"></line>`;
+  }).join('');
+  return `<div class="chart-shell"><div class="chart-stage"><svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(options.ariaLabel || 'Grafico historico')}"><defs><linearGradient id="historyAreaGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="${series[0].color}"></stop><stop offset="100%" stop-color="${series[0].color}" stop-opacity="0"></stop></linearGradient></defs>${gridLines}${lines}</svg></div><div class="chart-legend">${legend}</div><div class="chart-axis">${axis}</div></div>`;
+}
+function buildBenchmarkModel(history) {
+  const labels = history.map(snapshot => formatMonthTick(snapshot.date));
+  const portfolioSeries = normalizeHistorySeries(history, 'value');
+  const inflationInput = referenceWindow(MACRO_REFERENCE.inflation, history.length);
+  const inflationLevels = inflationInput.reduce((acc, value, index) => {
+    if (!index) return [100];
+    const previous = acc[index - 1];
+    acc.push(Number((previous * (1 + (value / 100 / 12))).toFixed(2)));
+    return acc;
+  }, []);
+  return {
+    labels,
+    series: [
+      { label: 'Cartera', color: 'var(--chart-portfolio)', values: portfolioSeries },
+      { label: 'IBEX 35', color: 'var(--chart-ibex)', values: buildReferenceIndex(history.length, BENCHMARK_STEPS.ibex) },
+      { label: 'Dow Jones', color: 'var(--chart-dow)', values: buildReferenceIndex(history.length, BENCHMARK_STEPS.dow) },
+      { label: 'Euronext 100', color: 'var(--chart-euronext)', values: buildReferenceIndex(history.length, BENCHMARK_STEPS.euronext) },
+      { label: 'IPC acumulado', color: 'var(--chart-inflation)', values: inflationLevels, dashed: true }
+    ]
+  };
+}
+function detectMacroCycle(inflation, rate, spread) {
+  if (rate >= inflation + 0.7 && spread > 0) return { title: 'Desinflacion favorable', detail: 'La inflacion cae mientras los tipos siguen por encima: el ciclo sigue restrictivo, pero la cartera esta absorbiendolo bien.' };
+  if (rate >= inflation + 0.7) return { title: 'Politica aun restrictiva', detail: 'Los tipos siguen por encima del IPC. Conviene vigilar deuda, liquidez y calidad de beneficios.' };
+  if (inflation > 3) return { title: 'Inflacion persistente', detail: 'El IPC sigue alto. Las rentas reales y los margenes merecen seguimiento.' };
+  return { title: 'Normalizacion monetaria', detail: 'IPC y tipos se moderan. El foco pasa a crecimiento real, valoraciones y disciplina de aportaciones.' };
+}
+function buildMacroCards(history, benchmark) {
+  const inflation = referenceWindow(MACRO_REFERENCE.inflation, history.length);
+  const rates = referenceWindow(MACRO_REFERENCE.rate, history.length);
+  const latestInflation = inflation.at(-1) || 0;
+  const latestRate = rates.at(-1) || 0;
+  const portfolioBase = benchmark.series[0].values.at(-1) || 100;
+  const ibexBase = benchmark.series[1].values.at(-1) || 100;
+  const dowBase = benchmark.series[2].values.at(-1) || 100;
+  const euronextBase = benchmark.series[3].values.at(-1) || 100;
+  const inflationBase = benchmark.series[4].values.at(-1) || 100;
+  const cycle = detectMacroCycle(latestInflation, latestRate, portfolioBase - ibexBase);
+  return {
+    summary: `<strong>${escapeHtml(cycle.title)}</strong><small>${escapeHtml(cycle.detail)}</small>`,
+    chips: [
+      { title: 'IPC interanual', value: `${num.format(latestInflation)} %`, note: 'Trayectoria desinflacionista en la serie demo.' },
+      { title: 'Precio del dinero', value: `${num.format(latestRate)} %`, note: 'Tipo de referencia usado para lectura de ciclo.' },
+      { title: 'Cartera vs IBEX', value: `${num.format(portfolioBase - ibexBase)} pts`, note: `Base 100: cartera ${num.format(portfolioBase)} vs IBEX ${num.format(ibexBase)}.` },
+      { title: 'Cartera vs IPC', value: `${num.format(portfolioBase - inflationBase)} pts`, note: `Rendimiento real orientativo frente a una base IPC ${num.format(inflationBase)}.`, emphasis: true },
+      { title: 'Cartera vs Dow', value: `${num.format(portfolioBase - dowBase)} pts`, note: `Comparativa con Dow Jones en base 100 (${num.format(dowBase)}).` },
+      { title: 'Cartera vs Euronext', value: `${num.format(portfolioBase - euronextBase)} pts`, note: `Comparativa con Euronext 100 en base 100 (${num.format(euronextBase)}).` }
+    ]
+  };
+}
+function renderHistory() {
+  const rows = sortRows(state.history, 'history');
+  $('#historyRows').innerHTML = rows.length ? rows.map(snapshot => `<tr><td>${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(snapshot.date))}</td><td>${eur.format(snapshot.value)}</td><td>${eur.format(snapshot.netWorth || 0)}</td><td>${eur.format(snapshot.liquidity || 0)}</td><td>${eur.format(snapshot.debt || 0)}</td><td>${eur.format(snapshot.dividends)}</td><td>${snapshot.count}</td><td><wa-button size="small" appearance="plain" data-delete-snapshot="${snapshot.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="8" class="empty-cell">No hay cierres guardados.</td></tr>';
+  const chronological = [...state.history].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const chart = $('#historyChart');
+  const benchmarkChart = $('#benchmarkChart');
+  const macroSummary = $('#macroSummary');
+  const macroChips = $('#macroChips');
+  if (!chronological.length) {
+    chart.className = 'history-chart empty-state';
+    chart.textContent = 'Sin cierres mensuales';
+    if (benchmarkChart) {
+      benchmarkChart.className = 'history-chart empty-state';
+      benchmarkChart.textContent = 'Sin datos comparables';
+    }
+    if (macroSummary) {
+      macroSummary.className = 'summary-stack history-summary empty-state';
+      macroSummary.textContent = 'Sin datos macro';
+    }
+    if (macroChips) {
+      macroChips.className = 'macro-grid empty-state';
+      macroChips.textContent = 'Sin datos';
+    }
+    return;
+  }
+  const trendLabels = chronological.map(snapshot => formatMonthTick(snapshot.date));
+  chart.className = 'history-chart';
+  chart.innerHTML = buildLineChart([
+    { label: 'Cartera', color: 'var(--chart-portfolio)', values: chronological.map(snapshot => snapshot.value || 0) },
+    { label: 'Patrimonio neto', color: 'var(--chart-networth)', values: chronological.map(snapshot => snapshot.netWorth || 0), dashed: true }
+  ], trendLabels, { ariaLabel: 'Evolucion patrimonial' });
+  const benchmark = buildBenchmarkModel(chronological);
+  if (benchmarkChart) {
+    benchmarkChart.className = 'history-chart';
+    benchmarkChart.innerHTML = buildLineChart(benchmark.series, benchmark.labels, { ariaLabel: 'Benchmark de cartera en base 100' });
+  }
+  if (macroSummary && macroChips) {
+    const macro = buildMacroCards(chronological, benchmark);
+    macroSummary.className = 'summary-stack history-summary';
+    macroSummary.innerHTML = macro.summary;
+    macroChips.className = 'macro-grid';
+    macroChips.innerHTML = macro.chips.map(chip => `<article class="macro-chip${chip.emphasis ? ' emphasis' : ''}"><strong>${escapeHtml(chip.title)}</strong><span>${escapeHtml(chip.value)}</span><small>${escapeHtml(chip.note)}</small></article>`).join('');
+  }
+}
+function renderAssets() { const rows = sortRows(state.assets, 'assets'); $('#assetRows').innerHTML = rows.length ? rows.map(asset => `<tr><td>${escapeHtml(asset.name)}</td><td>${escapeHtml(asset.type)}</td><td>${eur.format(asset.value || 0)}</td><td>${escapeHtml(asset.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-asset="${asset.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay activos adicionales.</td></tr>'; }
+function renderLiabilities() { const rows = sortRows(state.liabilities, 'liabilities'); $('#liabilityRows').innerHTML = rows.length ? rows.map(liability => `<tr><td>${escapeHtml(liability.name)}</td><td>${escapeHtml(liability.type)}</td><td>${eur.format(liability.value || 0)}</td><td>${escapeHtml(liability.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-liability="${liability.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay deudas registradas.</td></tr>'; }
 function renderSettings() { $('#monthlyExpenseInput').value = state.settings.monthlyExpense ?? ''; $('#targetDividendInput').value = state.settings.targetAnnualDividends ?? ''; $('#targetNetWorthInput').value = state.settings.targetNetWorth ?? ''; $('#monthlyContributionInput').value = state.settings.monthlyContribution ?? ''; }
 function renderUndoState() { const hasUndo = Boolean(state.lastImportUndo?.snapshot); ['#undoImportBtn', '#undoImportSettingsBtn'].forEach(selector => { const button = $(selector); if (!button) return; if (selector === '#undoImportBtn') button.hidden = !hasUndo; button.disabled = !hasUndo; }); $('#undoHelpText').textContent = hasUndo ? `Disponible la copia previa creada el ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(state.lastImportUndo.createdAt))}.` : 'No hay ninguna importacion reciente para revertir.'; }
 function renderBackupStatus() { $('#backupStatus').textContent = state.lastBackupAt ? `Ultima copia automatica: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(state.lastBackupAt))}.` : 'Todavia no se ha generado ninguna copia automatica previa a importacion.'; }
-function renderReportHistory() { const rows = sortRows(reportHistoryRows(), 'reports'); $('#reportRows').innerHTML = rows.length ? rows.map(row => `<tr><td>${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(row.createdAt))}</td><td>${row.score === null ? '�' : `${row.score}/100`}</td><td>${row.netWorth === null ? '�' : eur.format(row.netWorth)}</td><td>${row.dividends === null ? '�' : eur.format(row.dividends)}</td><td>${escapeHtml(row.concentrationLabel || '�')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Todavia no hay informes generados.</td></tr>'; }
+function renderReportHistory() { const rows = sortRows(reportHistoryRows(), 'reports'); $('#reportRows').innerHTML = rows.length ? rows.map(row => `<tr><td>${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(row.createdAt))}</td><td>${row.score === null ? '-' : `${row.score}/100`}</td><td>${row.netWorth === null ? '-' : eur.format(row.netWorth)}</td><td>${row.dividends === null ? '-' : eur.format(row.dividends)}</td><td>${escapeHtml(row.concentrationLabel || '-')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Todavia no hay informes generados.</td></tr>'; }
 function showNotice(message) { const notice = $('#notice'); notice.textContent = message; notice.classList.add('show'); clearTimeout(notice._timer); notice._timer = setTimeout(() => notice.classList.remove('show'), 3500); }
 function switchView(id) { $$('.view').forEach(view => view.classList.toggle('active', view.id === id)); $$('.nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === id)); scrollTo({ top: 0, behavior: 'smooth' }); }
 function openImport() { pendingImport = null; $('#csvFile').value = ''; $('#importMode').value = 'update'; $('#importStepSelect').hidden = false; $('#importStepPreview').hidden = true; $('#confirmImportBtn').hidden = true; $('#importWarnings').hidden = true; $('#importDialog').open = true; }
@@ -816,7 +1002,7 @@ function addLiability(event) {
   render();
   $('#liabilityForm').reset();
   $('#liabilityType').value = 'mortgage';
-  showNotice('Deuda a�adida.');
+  showNotice('Deuda anadida.');
 }
 function saveFinancialSettings(event) {
   event.preventDefault();
@@ -992,3 +1178,100 @@ render();
 
 
 
+
+
+const DEMO_TRANSACTIONS = [
+  { id: 'tx-demo-1', datetime: '2025-08-14T10:00:00.000Z', type: 'BUY', isin: 'NL0010273215', symbol: 'ASML', name: 'ASML Holding NV', quantity: 4, price: 612, amount: 2448, currency: 'EUR', fees: 2.5, taxes: 0, portfolio: 'Demo' },
+  { id: 'tx-demo-2', datetime: '2025-09-18T10:00:00.000Z', type: 'BUY', isin: 'US00287Y1091', symbol: 'ABBV', name: 'AbbVie Inc', quantity: 20, price: 148.7, amount: 2974, currency: 'EUR', fees: 3, taxes: 0, portfolio: 'Demo' },
+  { id: 'tx-demo-3', datetime: '2025-10-31T10:00:00.000Z', type: 'BUY', isin: 'ES0167050915', symbol: 'ACS', name: 'ACS Actividades de Construccion y Servicios SA', quantity: 90, price: 35.2, amount: 3168, currency: 'EUR', fees: 2.8, taxes: 0, portfolio: 'Demo' },
+  { id: 'tx-demo-4', datetime: '2025-12-12T10:00:00.000Z', type: 'BUY', isin: 'ES0130960018', symbol: 'ENG', name: 'Enagas SA', quantity: 160, price: 14.3, amount: 2288, currency: 'EUR', fees: 2.2, taxes: 0, portfolio: 'Demo' },
+  { id: 'tx-demo-5', datetime: '2026-01-16T10:00:00.000Z', type: 'BUY', isin: 'US92826C8394', symbol: 'V', name: 'Visa Inc', quantity: 12, price: 248, amount: 2976, currency: 'EUR', fees: 3.5, taxes: 0, portfolio: 'Demo' },
+  { id: 'tx-demo-6', datetime: '2026-02-27T10:00:00.000Z', type: 'BUY', isin: 'GB0002875804', symbol: 'BATS', name: 'British American Tobacco PLC', quantity: 120, price: 31.1, amount: 3732, currency: 'EUR', fees: 3.1, taxes: 0, portfolio: 'Demo' },
+  { id: 'tx-demo-7', datetime: '2026-04-24T10:00:00.000Z', type: 'SELL', isin: 'GB0002875804', symbol: 'BATS', name: 'British American Tobacco PLC', quantity: 40, price: 33.2, amount: 1328, currency: 'EUR', fees: 2.4, taxes: 0, portfolio: 'Demo' },
+  { id: 'tx-demo-8', datetime: '2026-05-28T10:00:00.000Z', type: 'BUY', isin: 'US00287Y1091', symbol: 'ABBV', name: 'AbbVie Inc', quantity: 15, price: 163.2, amount: 2448, currency: 'EUR', fees: 3, taxes: 0, portfolio: 'Demo' },
+  { id: 'tx-demo-9', datetime: '2026-06-26T10:00:00.000Z', type: 'BUY', isin: 'ES0167050915', symbol: 'ACS', name: 'ACS Actividades de Construccion y Servicios SA', quantity: 70, price: 42.8, amount: 2996, currency: 'EUR', fees: 2.8, taxes: 0, portfolio: 'Demo' },
+  { id: 'tx-demo-10', datetime: '2026-07-19T10:00:00.000Z', type: 'SELL', isin: 'ES0130960018', symbol: 'ENG', name: 'Enagas SA', quantity: 60, price: 12.9, amount: 774, currency: 'EUR', fees: 2, taxes: 0, portfolio: 'Demo' }
+];
+function defaultTransaction() {
+  return { id: `tx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, datetime: new Date().toISOString(), date: new Date().toISOString().slice(0, 10), month: new Date().toISOString().slice(0, 7), type: 'BUY', isin: '', symbol: '', name: '', quantity: null, price: null, amount: null, currency: 'EUR', fees: 0, taxes: 0, costs: 0, portfolio: '', totalCash: null, importMeta: null, raw: null, dedupeKey: '' };
+}
+function migrateTransaction(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const datetime = entry.datetime || entry.date || new Date().toISOString();
+  const quantity = toNum(entry.quantity, null);
+  const amount = toNum(entry.amount, null);
+  const fees = toNum(entry.fees, 0) || 0;
+  const taxes = toNum(entry.taxes, 0) || 0;
+  const type = cleanText(entry.type).toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+  const dedupeKey = cleanText(entry.dedupeKey) || cleanText(entry.id) || `${datetime}|${normalizeIsin(entry.isin)}|${type}|${quantity ?? ''}|${amount ?? ''}`;
+  return { ...defaultTransaction(), ...entry, id: cleanText(entry.id) || dedupeKey, datetime, date: String(datetime).slice(0, 10), month: String(datetime).slice(0, 7), type, isin: normalizeIsin(entry.isin), symbol: cleanText(entry.symbol).toUpperCase(), name: cleanText(entry.name || entry.symbol || 'Operacion sin nombre'), quantity, price: toNum(entry.price, null), amount, currency: normalizeCurrency(entry.currency), fees, taxes, costs: fees + taxes, portfolio: cleanText(entry.portfolio), totalCash: toNum(entry.totalCash, amount === null ? null : (type === 'BUY' ? amount + fees + taxes : amount - fees - taxes)), importMeta: entry.importMeta && typeof entry.importMeta === 'object' ? entry.importMeta : null, raw: entry.raw && typeof entry.raw === 'object' ? entry.raw : null, dedupeKey };
+}
+function defaultState() {
+  return { schemaVersion: SCHEMA_VERSION, portfolio: [], transactions: [], history: [], backups: [], assets: [], liabilities: [], reportHistory: [], settings: { ...DEFAULT_SETTINGS }, tableSorts: defaultTableSorts(), lastImport: null, lastTransactionsImport: null, lastBackupAt: null, lastImportUndo: null, theme: 'light' };
+}
+function migrateState(raw) {
+  const base = defaultState();
+  if (!raw || typeof raw !== 'object') return base;
+  return { ...base, ...raw, schemaVersion: SCHEMA_VERSION, portfolio: Array.isArray(raw.portfolio) ? raw.portfolio.map(migratePosition).filter(Boolean) : [], transactions: Array.isArray(raw.transactions) ? raw.transactions.map(migrateTransaction).filter(Boolean) : [], history: Array.isArray(raw.history) ? raw.history.map(migrateSnapshot).filter(Boolean) : [], backups: Array.isArray(raw.backups) ? raw.backups.map(migrateBackup).filter(Boolean).slice(0, 10) : [], assets: Array.isArray(raw.assets) ? raw.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(raw.liabilities) ? raw.liabilities.map(migrateLiability).filter(Boolean) : [], reportHistory: Array.isArray(raw.reportHistory) ? raw.reportHistory.map(migrateReportEntry).filter(Boolean).slice(0, 24) : [], settings: migrateSettings(raw.settings), tableSorts: migrateTableSorts(raw.tableSorts), lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null, lastTransactionsImport: raw.lastTransactionsImport || null, theme: raw.theme === 'dark' ? 'dark' : 'light' };
+}
+function cloneSnapshot() { return JSON.parse(JSON.stringify({ portfolio: state.portfolio, transactions: state.transactions, history: state.history, assets: state.assets, liabilities: state.liabilities, reportHistory: state.reportHistory, settings: state.settings, lastImport: state.lastImport, lastTransactionsImport: state.lastTransactionsImport, lastBackupAt: state.lastBackupAt })); }
+function transactionRowsData() { return sortRows(state.transactions || [], 'transactions'); }
+function transactionTotals(list = state.transactions || []) { const buys = list.filter(item => item.type === 'BUY'); const sells = list.filter(item => item.type === 'SELL'); const buyAmount = buys.reduce((sum, item) => sum + (item.totalCash || 0), 0); const sellAmount = sells.reduce((sum, item) => sum + (item.totalCash || 0), 0); const costs = list.reduce((sum, item) => sum + (item.costs || 0), 0); return { count: list.length, buyCount: buys.length, sellCount: sells.length, buyAmount, sellAmount, netAmount: buyAmount - sellAmount, costs }; }
+function transactionAnalytics(list = state.transactions || []) { const chronological = [...list].sort((a, b) => new Date(a.datetime) - new Date(b.datetime)); const ledger = new Map(); const stats = new Map(); let realized = 0; chronological.forEach(item => { const key = item.isin || item.symbol || item.name; const position = ledger.get(key) || { qty: 0, cost: 0 }; const summary = stats.get(key) || { name: item.name, buyAmount: 0, sellAmount: 0, trades: 0 }; const quantity = item.quantity || 0; const amount = item.amount || 0; const costs = item.costs || 0; if (item.type === 'BUY') { position.qty += quantity; position.cost += amount + costs; summary.buyAmount += amount + costs; } else { const avgCost = position.qty > 0 ? position.cost / position.qty : 0; const costBasis = avgCost * Math.min(quantity, position.qty || quantity); realized += (amount - costs) - costBasis; position.qty = Math.max(0, position.qty - quantity); position.cost = Math.max(0, position.cost - costBasis); summary.sellAmount += amount - costs; } summary.trades += 1; ledger.set(key, position); stats.set(key, summary); }); const now = new Date(); const monthDiff = item => (now.getFullYear() - new Date(item.datetime).getFullYear()) * 12 + (now.getMonth() - new Date(item.datetime).getMonth()); const lastTwelve = chronological.filter(item => monthDiff(item) >= 0 && monthDiff(item) < 12); const lastSix = chronological.filter(item => monthDiff(item) >= 0 && monthDiff(item) < 6); const monthlyBuys = lastSix.filter(item => item.type === 'BUY').reduce((sum, item) => sum + (item.totalCash || 0), 0) / 6; const allTotals = transactionTotals(chronological); const topBuyer = [...stats.values()].sort((a, b) => b.buyAmount - a.buyAmount)[0] || null; const topSeller = [...stats.values()].sort((a, b) => b.sellAmount - a.sellAmount)[0] || null; const topRotation = [...stats.values()].sort((a, b) => (b.buyAmount + b.sellAmount) - (a.buyAmount + a.sellAmount))[0] || null; return { realized, monthlyBuys, lastTwelveMonths: transactionTotals(lastTwelve), allTotals, topBuyer, topSeller, topRotation, sellRatio: allTotals.buyAmount ? allTotals.sellAmount / allTotals.buyAmount : 0 }; }
+
+function renderTransactions() {
+  const rows = transactionRowsData();
+  const analytics = transactionAnalytics(rows);
+  const txRows = $('#transactionRows');
+  if (txRows) txRows.innerHTML = rows.length ? rows.map(item => `<tr><td>${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(item.datetime))}</td><td>${item.type === 'BUY' ? 'Compra' : 'Venta'}</td><td class="company-cell"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.symbol)} | ${escapeHtml(item.isin || 'Sin ISIN')}</small></td><td>${item.quantity === null ? '-' : num.format(item.quantity)}</td><td>${formatCurrency(item.price, item.currency)}</td><td>${formatCurrency(item.amount, item.currency)}</td><td>${formatCurrency(item.costs, item.currency)}</td><td>${escapeHtml(item.portfolio || '-')}</td></tr>`).join('') : '<tr><td colspan="8" class="empty-cell">Importa el CSV de transacciones.</td></tr>';
+  const netCapital = $('#txNetCapital');
+  if (!netCapital) return;
+  if (!rows.length) { netCapital.textContent = eur.format(0); $('#txCapitalMeta').textContent = 'Sin operaciones importadas.'; $('#txFriction').textContent = eur.format(0); $('#txFrictionMeta').textContent = 'Coste operativo acumulado.'; $('#txRealized').textContent = eur.format(0); $('#txRealizedMeta').textContent = 'Ventas con coste historico reconstruido.'; $('#txDecisionRows').className = 'signal-list empty-state'; $('#txDecisionRows').textContent = 'Importa transacciones para ver patrones de decision.'; $('#txHighlights').className = 'summary-stack empty-state'; $('#txHighlights').textContent = 'Sin transacciones importadas.'; return; }
+  netCapital.textContent = eur.format(analytics.lastTwelveMonths.netAmount);
+  $('#txCapitalMeta').textContent = analytics.lastTwelveMonths.netAmount >= 0 ? 'Capital desplegado neto en los ultimos 12 meses.' : 'Has recuperado mas capital del que has invertido en 12 meses.';
+  $('#txFriction').textContent = eur.format(analytics.allTotals.costs);
+  $('#txFrictionMeta').textContent = `${analytics.allTotals.count} operaciones importadas.`;
+  $('#txRealized').textContent = eur.format(analytics.realized);
+  $('#txRealizedMeta').textContent = analytics.realized >= 0 ? 'Ventas realizadas con ganancia agregada.' : 'Ventas realizadas con perdida agregada.';
+  const signals = [
+    { title: 'Ritmo de aportacion', name: eur.format(analytics.monthlyBuys), detail: 'Media de compras brutas por mes en los ultimos seis meses.', tone: analytics.monthlyBuys > 1500 ? 'good' : analytics.monthlyBuys > 500 ? 'warn' : 'risk' },
+    { title: 'Rotacion', name: `${num.format(analytics.sellRatio * 100)} %`, detail: 'Ventas frente a compras acumuladas. Mucha rotacion exige una tesis clara.', tone: analytics.sellRatio < 0.2 ? 'good' : analytics.sellRatio < 0.45 ? 'warn' : 'risk' },
+    { title: 'Coste operativo', name: eur.format(analytics.allTotals.costs), detail: 'Comisiones e impuestos acumulados.', tone: analytics.allTotals.costs < 100 ? 'good' : analytics.allTotals.costs < 250 ? 'warn' : 'risk' }
+  ];
+  $('#txDecisionRows').className = 'signal-list';
+  $('#txDecisionRows').innerHTML = signals.map(signal => `<div class="signal-row signal-${signal.tone}"><strong>${signal.title}</strong><span>${escapeHtml(signal.name)}</span><small>${escapeHtml(signal.detail)}</small></div>`).join('');
+  const blocks = [];
+  if (analytics.topBuyer) blocks.push(`<strong>Mas conviccion: ${escapeHtml(analytics.topBuyer.name)}</strong><small>Has destinado ${eur.format(analytics.topBuyer.buyAmount)} en compras.</small>`);
+  if (analytics.topSeller) blocks.push(`<strong>Mayor reduccion: ${escapeHtml(analytics.topSeller.name)}</strong><small>Has recuperado ${eur.format(analytics.topSeller.sellAmount)} con ventas.</small>`);
+  if (analytics.topRotation) blocks.push(`<strong>Posicion mas rotada: ${escapeHtml(analytics.topRotation.name)}</strong><small>Volumen total movido: ${eur.format(analytics.topRotation.buyAmount + analytics.topRotation.sellAmount)}.</small>`);
+  $('#txHighlights').className = 'summary-stack';
+  $('#txHighlights').innerHTML = blocks.join('');
+}
+function render() { applyTheme(); renderDashboard(); renderPortfolio(); renderTransactions(); renderHistory(); renderFilters(); renderAssets(); renderLiabilities(); renderSettings(); renderUndoState(); renderBackupStatus(); renderReportHistory(); renderSortableHeaders(); }
+function normalizeTransactionRow(row, index) { const cleanRow = sanitizeRow(row); const type = cleanText(cleanRow.type).toUpperCase(); const datetime = cleanText(cleanRow.datetime); const transaction = migrateTransaction({ id: cleanText(cleanRow.id), datetime, type, isin: cleanRow.isin, symbol: cleanRow.symbol, name: cleanRow.name || cleanRow.symbol || `Fila ${index + 2}`, quantity: parseLocaleNumber(cleanRow.quantity), price: parseLocaleNumber(cleanRow.price), amount: parseLocaleNumber(cleanRow.amount), currency: cleanRow.currency, fees: parseLocaleNumber(cleanRow.fees) || 0, taxes: parseLocaleNumber(cleanRow.taxes) || 0, portfolio: cleanText(cleanRow.portfolio), importMeta: { source: 'divvydiary-transactions', importedAt: new Date().toISOString(), rowNumber: index + 2 }, raw: cleanRow }); const issues = []; if (!['BUY', 'SELL'].includes(type)) issues.push('Tipo no soportado.'); if (!transaction.isin) issues.push('Operacion sin ISIN valido.'); if (!transaction.datetime) issues.push('Falta la fecha y hora.'); if (transaction.quantity === null) issues.push('Falta la cantidad.'); if (transaction.amount === null) issues.push('Falta el importe.'); return { rowNumber: index + 2, transaction, issues }; }
+function buildTransactionImportPreview(file, rows) { const existing = new Map((state.transactions || []).map(item => [item.dedupeKey, item])); const seen = new Set(); const preview = { file, validEntries: [], newItems: [], duplicateItems: [], skippedRows: [], issues: [], totals: { count: 0, buyCount: 0, sellCount: 0, netAmount: 0, fees: 0 } }; rows.forEach(item => { const { transaction, issues, rowNumber } = item; if (issues.length && (!transaction.isin || !transaction.datetime || transaction.quantity === null || transaction.amount === null || !['BUY', 'SELL'].includes(transaction.type))) { preview.skippedRows.push({ rowNumber, transaction, reason: issues.join(' ') }); return; } if (seen.has(transaction.dedupeKey) || existing.has(transaction.dedupeKey)) { preview.duplicateItems.push({ rowNumber, transaction }); return; } seen.add(transaction.dedupeKey); preview.validEntries.push(transaction); preview.newItems.push({ rowNumber, transaction }); preview.totals.count += 1; preview.totals.buyCount += transaction.type === 'BUY' ? 1 : 0; preview.totals.sellCount += transaction.type === 'SELL' ? 1 : 0; preview.totals.netAmount += transaction.type === 'BUY' ? (transaction.totalCash || 0) : -(transaction.totalCash || 0); preview.totals.fees += transaction.costs || 0; if (issues.length) preview.issues.push(...issues.map(message => ({ rowNumber, message, label: `${transaction.name} | ${transaction.symbol}` }))); }); return preview; }
+function renderTransactionImportPreview() { if (!pendingTransactionImport) return; const preview = pendingTransactionImport; $('#transactionsFilename').textContent = preview.file.name; $('#transactionsSummary').textContent = `${preview.validEntries.length} operaciones listas para importar y ${preview.duplicateItems.length + preview.skippedRows.length} descartadas por seguridad.`; $('#transactionsCount').textContent = String(preview.totals.count); $('#transactionsBuyCount').textContent = String(preview.totals.buyCount); $('#transactionsSellCount').textContent = String(preview.totals.sellCount); $('#transactionsNetAmount').textContent = eur.format(preview.totals.netAmount); $('#transactionsFees').textContent = eur.format(preview.totals.fees); $('#transactionsNew').textContent = `${preview.newItems.length} nuevas`; $('#transactionsUpdated').textContent = `${preview.duplicateItems.length} duplicadas`; $('#transactionsErrors').textContent = `${preview.issues.length + preview.skippedRows.length} incidencias`; renderPreviewList('#transactionsNewList', preview.newItems.slice(0, 12), item => `<li>${escapeHtml(item.transaction.name)}<small>${escapeHtml(item.transaction.type)} | ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(item.transaction.datetime))}</small></li>`); renderPreviewList('#transactionsDuplicateList', preview.duplicateItems.slice(0, 12), item => `<li>${escapeHtml(item.transaction.name)}<small>${escapeHtml(item.transaction.dedupeKey)}</small></li>`); const issues = [...preview.skippedRows.map(item => ({ rowNumber: item.rowNumber, text: `${item.transaction.name} | ${item.reason}` })), ...preview.issues.map(issue => ({ rowNumber: issue.rowNumber, text: `${issue.label} | ${issue.message}` }))]; renderPreviewList('#transactionsIssueList', issues.slice(0, 20), issue => `<li>Fila ${issue.rowNumber}: ${escapeHtml(issue.text)}</li>`); const warning = $('#transactionsWarnings'); const messages = []; if (preview.duplicateItems.length) messages.push(`Se han detectado ${preview.duplicateItems.length} operaciones repetidas.`); if (preview.skippedRows.length) messages.push(`Se omiten ${preview.skippedRows.length} filas con datos insuficientes.`); warning.hidden = !messages.length; warning.innerHTML = messages.map(message => `<div>${escapeHtml(message)}</div>`).join(''); $('#transactionsStepSelect').hidden = true; $('#transactionsStepPreview').hidden = false; $('#confirmTransactionsBtn').hidden = false; }
+function parseTransactionsCsv(file) { if (!window.Papa) { showNotice('No se ha cargado el lector CSV. Comprueba la conexion.'); return; } Papa.parse(file, { header: true, skipEmptyLines: true, delimiter: ';', encoding: 'UTF-8', complete: result => { const fields = (result.meta.fields || []).map(field => cleanText(field).replace(/^\uFEFF/, '')); const required = ['datetime', 'type', 'isin', 'symbol', 'quantity', 'amount']; const missing = required.filter(field => !fields.includes(field)); if (missing.length) { showNotice(`CSV de transacciones no reconocido. Faltan: ${missing.join(', ')}`); return; } const rows = result.data.map((row, index) => normalizeTransactionRow(row, index)); pendingTransactionImport = buildTransactionImportPreview(file, rows); renderTransactionImportPreview(); }, error: error => showNotice(`Error al leer el CSV de transacciones: ${error.message}`) }); }
+function confirmTransactionsImport() { if (!pendingTransactionImport) return; saveImportBackup(pendingTransactionImport.file.name); const merged = new Map((state.transactions || []).map(item => [item.dedupeKey, item])); pendingTransactionImport.validEntries.forEach(item => merged.set(item.dedupeKey, item)); state.transactions = [...merged.values()].map(migrateTransaction).filter(Boolean); state.lastTransactionsImport = new Date().toISOString(); saveState(); render(); $('#transactionsDialog').open = false; showNotice(`Importacion completada: ${pendingTransactionImport.validEntries.length} operaciones incorporadas.`); pendingTransactionImport = null; }
+function openTransactionsImport() { pendingTransactionImport = null; $('#transactionsCsvFile').value = ''; $('#transactionsStepSelect').hidden = false; $('#transactionsStepPreview').hidden = true; $('#confirmTransactionsBtn').hidden = true; $('#transactionsWarnings').hidden = true; $('#transactionsDialog').open = true; }
+
+function undoLastImportLatest() { if (!state.lastImportUndo?.snapshot) { showNotice('No hay ninguna importacion que deshacer.'); return; } const snapshot = state.lastImportUndo.snapshot; state.portfolio = (snapshot.portfolio || []).map(migratePosition).filter(Boolean); state.transactions = (snapshot.transactions || []).map(migrateTransaction).filter(Boolean); state.history = (snapshot.history || []).map(migrateSnapshot).filter(Boolean); state.assets = (snapshot.assets || []).map(migrateAsset).filter(Boolean); state.liabilities = (snapshot.liabilities || []).map(migrateLiability).filter(Boolean); state.reportHistory = (snapshot.reportHistory || []).map(migrateReportEntry).filter(Boolean); state.settings = migrateSettings(snapshot.settings); state.lastImport = snapshot.lastImport || null; state.lastTransactionsImport = snapshot.lastTransactionsImport || null; state.lastBackupAt = snapshot.lastBackupAt || null; state.lastImportUndo = null; saveState(); render(); showNotice('Se ha restaurado la copia previa a la ultima importacion.'); }
+function rebindClick(selector, handler) { const element = $(selector); if (!element) return null; const clone = element.cloneNode(true); element.replaceWith(clone); clone.addEventListener('click', handler); return clone; }
+if (!Array.isArray(state.transactions)) state.transactions = [];
+if (!state.transactions.length && state.portfolio.some(position => position.importMeta?.source === 'demo')) state.transactions = DEMO_TRANSACTIONS.map(migrateTransaction);
+state.lastTransactionsImport = state.lastTransactionsImport || (state.transactions.length ? new Date().toISOString() : null);
+rebindClick('#undoImportBtn', undoLastImportLatest);
+rebindClick('#undoImportSettingsBtn', undoLastImportLatest);
+$('#transactionsImportBtn')?.addEventListener('click', openTransactionsImport);
+$('#chooseTransactionsBtn')?.addEventListener('click', () => $('#transactionsCsvFile').click());
+$('#cancelTransactionsBtn')?.addEventListener('click', () => { $('#transactionsDialog').open = false; pendingTransactionImport = null; });
+$('#confirmTransactionsBtn')?.addEventListener('click', confirmTransactionsImport);
+$('#transactionsCsvFile')?.addEventListener('change', event => { const file = event.target.files?.[0]; if (file) parseTransactionsCsv(file); event.target.value = ''; });
+const transactionsDropZone = $('#transactionsDropZone');
+if (transactionsDropZone) {
+  ['dragenter', 'dragover'].forEach(type => transactionsDropZone.addEventListener(type, event => { event.preventDefault(); transactionsDropZone.classList.add('dragover'); }));
+  ['dragleave', 'drop'].forEach(type => transactionsDropZone.addEventListener(type, event => { event.preventDefault(); transactionsDropZone.classList.remove('dragover'); }));
+  transactionsDropZone.addEventListener('drop', event => { const file = event.dataTransfer?.files?.[0]; if (file) parseTransactionsCsv(file); });
+}
+saveState();
+render();
