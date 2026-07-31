@@ -1375,6 +1375,10 @@ function registerServiceWorker() {
     try {
       const registration = await navigator.serviceWorker.register('./sw.js');
       bindWorkerLifecycle(registration);
+      registration.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') registration.update().catch(() => {});
+      });
     } catch (error) {
       console.error('SW registration failed', error);
     }
