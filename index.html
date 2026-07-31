@@ -211,6 +211,45 @@
     <wa-button slot="footer" id="confirmTransactionsBtn" variant="brand" hidden>Confirmar importacion</wa-button>
   </wa-dialog>
 
+  <wa-dialog id="monthlyCloseDialog" label="Cierre mensual" light-dismiss>
+    <div id="monthlyCloseAlready" hidden>
+      <wa-callout variant="warning"><strong id="monthlyCloseAlreadyTitle"></strong><br><span id="monthlyCloseAlreadyText"></span></wa-callout>
+    </div>
+    <div id="monthlyCloseEmpty" hidden>
+      <wa-callout variant="warning">Importa primero una cartera de DivvyDiary para poder calcular el cierre.</wa-callout>
+    </div>
+    <div id="monthlyCloseForm">
+      <section class="preview-panel">
+        <h3>Datos de DivvyDiary</h3>
+        <p id="monthlyClosePortfolioStatus" class="muted-copy"></p>
+        <p id="monthlyCloseTxStatus" class="muted-copy"></p>
+        <div class="inline-actions">
+          <wa-button id="monthlyCloseImportPortfolioBtn" appearance="outlined" size="small"><wa-icon slot="start" name="file-import"></wa-icon>Importar cartera</wa-button>
+          <wa-button id="monthlyCloseImportTxBtn" appearance="outlined" size="small"><wa-icon slot="start" name="receipt"></wa-icon>Importar transacciones</wa-button>
+        </div>
+      </section>
+      <section class="preview-panel">
+        <h3>Liquidez, activos y deuda</h3>
+        <p id="monthlyCloseAssetsStatus" class="muted-copy"></p>
+        <wa-button id="monthlyCloseGoAssetsBtn" appearance="outlined" size="small"><wa-icon slot="start" name="gear"></wa-icon>Revisar en Datos</wa-button>
+      </section>
+      <wa-input id="monthlyCloseContribution" label="Aportacion de este mes (EUR)" inputmode="decimal"></wa-input>
+      <wa-textarea id="monthlyCloseNotes" label="Notas del mes" rows="3"></wa-textarea>
+      <section class="preview-panel">
+        <h3>Vista previa del cierre</h3>
+        <div class="preview-kpis">
+          <div><span>Cartera</span><strong id="monthlyClosePreviewValue">0 EUR</strong></div>
+          <div><span>Patrimonio neto</span><strong id="monthlyClosePreviewNetWorth">0 EUR</strong></div>
+          <div><span>Liquidez</span><strong id="monthlyClosePreviewLiquidity">0 EUR</strong></div>
+          <div><span>Deuda</span><strong id="monthlyClosePreviewDebt">0 EUR</strong></div>
+          <div><span>Dividendos</span><strong id="monthlyClosePreviewDividends">0 EUR</strong></div>
+        </div>
+      </section>
+    </div>
+    <wa-button slot="footer" id="cancelMonthlyCloseBtn" appearance="plain">Cancelar</wa-button>
+    <wa-button slot="footer" id="confirmMonthlyCloseBtn" variant="brand">Confirmar cierre</wa-button>
+  </wa-dialog>
+
   <wa-dialog id="positionDialog" label="Detalle de la posicion"><div class="stack-form"><h3 id="positionDialogTitle">Posicion</h3><p id="positionSummary" class="muted-copy"></p><wa-textarea id="positionNotes" label="Notas personales" rows="3"></wa-textarea><wa-textarea id="positionThesis" label="Tesis de inversion" rows="4"></wa-textarea><div class="inline-form"><wa-input id="positionTargetPrice" label="Precio objetivo" inputmode="decimal"></wa-input><wa-select id="positionStatus" label="Estado"><wa-option value="active">Activa</wa-option><wa-option value="watch">Seguimiento</wa-option><wa-option value="archived">Archivada</wa-option></wa-select></div></div><wa-button slot="footer" id="positionCancelBtn" appearance="plain">Cancelar</wa-button><wa-button slot="footer" id="positionSaveBtn" variant="brand">Guardar cambios</wa-button></wa-dialog>
   <wa-dialog id="confirmDialog" label="Confirmacion"><p id="confirmText"></p><wa-button slot="footer" id="confirmCancel" appearance="plain">Cancelar</wa-button><wa-button slot="footer" id="confirmOk" variant="danger">Confirmar</wa-button></wa-dialog>
   <div id="notice" class="notice" role="status" aria-live="polite"></div>

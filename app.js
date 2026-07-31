@@ -1112,8 +1112,63 @@ function confirmTransactionsImport() {
   showNotice(`Importacion completada: ${additions.length} operaciones nuevas.`);
   pendingTransactionImport = null;
 }
-function buildMonthlySnapshot() { const portfolio = activePortfolio(); const metrics = fullMetrics(portfolio); return { id: crypto.randomUUID?.() || String(Date.now()), month: new Date().toISOString().slice(0, 7), date: new Date().toISOString(), value: metrics.value, cost: metrics.cost, gain: metrics.gain, dividends: metrics.dividends, count: metrics.count, liquidity: metrics.liquidity, otherAssets: metrics.otherAssets, debt: metrics.liabilities, netWorth: metrics.netWorth, monthlyContribution: state.settings.monthlyContribution, notes: '', positions: sortedPortfolio(portfolio).slice(0, 10).map(position => ({ isin: position.isin, symbol: position.symbol, name: position.name, value: position.marketValue, weight: position.allocation })) }; }
-function saveSnapshot() { const portfolio = activePortfolio(); if (!portfolio.length) { showNotice('Importa primero una cartera.'); return; } const snapshot = buildMonthlySnapshot(); const existingIndex = state.history.findIndex(item => item.month === snapshot.month); if (existingIndex >= 0) { snapshot.id = state.history[existingIndex].id; snapshot.notes = state.history[existingIndex].notes || ''; state.history[existingIndex] = snapshot; } else state.history.push(snapshot); saveState(); renderHistory(); renderDashboard(); showNotice('Cierre mensual guardado.'); }
+function buildMonthlySnapshot(overrides = {}) { const portfolio = activePortfolio(); const metrics = fullMetrics(portfolio); return { id: crypto.randomUUID?.() || String(Date.now()), month: new Date().toISOString().slice(0, 7), date: new Date().toISOString(), value: metrics.value, cost: metrics.cost, gain: metrics.gain, dividends: metrics.dividends, count: metrics.count, liquidity: metrics.liquidity, otherAssets: metrics.otherAssets, debt: metrics.liabilities, netWorth: metrics.netWorth, monthlyContribution: overrides.monthlyContribution ?? state.settings.monthlyContribution, notes: overrides.notes || '', positions: sortedPortfolio(portfolio).slice(0, 10).map(position => ({ isin: position.isin, symbol: position.symbol, name: position.name, value: position.marketValue, weight: position.allocation })) }; }
+function currentMonthKey() { return new Date().toISOString().slice(0, 7); }
+function existingSnapshotForMonth(month = currentMonthKey()) { return state.history.find(item => item.month === month) || null; }
+function updateMonthlyClosePreview() {
+  const metrics = fullMetrics();
+  $('#monthlyClosePreviewValue').textContent = eur.format(metrics.value);
+  $('#monthlyClosePreviewNetWorth').textContent = eur.format(metrics.netWorth);
+  $('#monthlyClosePreviewLiquidity').textContent = eur.format(metrics.liquidity);
+  $('#monthlyClosePreviewDebt').textContent = eur.format(metrics.liabilities);
+  $('#monthlyClosePreviewDividends').textContent = eur.format(metrics.dividends);
+}
+function openMonthlyClose() {
+  const already = existingSnapshotForMonth();
+  const alreadyNode = $('#monthlyCloseAlready');
+  const emptyNode = $('#monthlyCloseEmpty');
+  const formNode = $('#monthlyCloseForm');
+  const confirmBtn = $('#confirmMonthlyCloseBtn');
+  const monthLabel = new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(new Date());
+  if (already) {
+    alreadyNode.hidden = false;
+    emptyNode.hidden = true;
+    formNode.hidden = true;
+    confirmBtn.hidden = true;
+    $('#monthlyCloseAlreadyTitle').textContent = `Ya existe un cierre para ${monthLabel}`;
+    $('#monthlyCloseAlreadyText').textContent = `Se registro el ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(already.date))}. Solo se permite un cierre por mes: eliminalo desde el Historico si necesitas corregirlo.`;
+  } else if (!activePortfolio().length) {
+    alreadyNode.hidden = true;
+    emptyNode.hidden = false;
+    formNode.hidden = true;
+    confirmBtn.hidden = true;
+  } else {
+    alreadyNode.hidden = true;
+    emptyNode.hidden = true;
+    formNode.hidden = false;
+    confirmBtn.hidden = false;
+    $('#monthlyClosePortfolioStatus').textContent = state.lastImport ? `Ultima importacion de cartera: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(state.lastImport))}.` : 'Todavia no has importado ninguna cartera de DivvyDiary.';
+    $('#monthlyCloseTxStatus').textContent = state.lastTransactionsImport ? `Ultima importacion de transacciones: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(state.lastTransactionsImport))}.` : 'Todavia no has importado transacciones (opcional).';
+    const assets = assetTotals();
+    $('#monthlyCloseAssetsStatus').textContent = `Liquidez: ${eur.format(assets.liquidity)} | Otros activos: ${eur.format(assets.otherAssets)} | Deuda: ${eur.format(assets.liabilities)}.`;
+    $('#monthlyCloseContribution').value = state.settings.monthlyContribution ?? '';
+    $('#monthlyCloseNotes').value = '';
+    updateMonthlyClosePreview();
+  }
+  $('#monthlyCloseDialog').open = true;
+}
+function confirmMonthlyClose() {
+  if (existingSnapshotForMonth()) { showNotice('Ya existe un cierre para este mes.'); return; }
+  const portfolio = activePortfolio();
+  if (!portfolio.length) { showNotice('Importa primero una cartera.'); return; }
+  const snapshot = buildMonthlySnapshot({ monthlyContribution: parseLocaleNumber($('#monthlyCloseContribution').value), notes: $('#monthlyCloseNotes').value.trim() });
+  state.history.push(snapshot);
+  saveState();
+  renderHistory();
+  renderDashboard();
+  $('#monthlyCloseDialog').open = false;
+  showNotice('Cierre mensual guardado.');
+}
 function download(name, content, type) { const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([content], { type })); link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); }
 function exportJson() { download(`family-office-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(state, null, 2), 'application/json'); }
 function restoreJson(file) { const reader = new FileReader(); reader.onload = () => { try { const migrated = migrateState(JSON.parse(reader.result)); Object.assign(state, defaultState(), migrated); saveState(); render(); showNotice('Copia restaurada correctamente.'); } catch (error) { showNotice(`No se pudo restaurar: ${error.message}`); } }; reader.readAsText(file); }
@@ -1330,8 +1385,13 @@ if (transactionsDropZone) {
 }
 $('#undoImportBtn')?.addEventListener('click', undoLastImport);
 $('#undoImportSettingsBtn')?.addEventListener('click', undoLastImport);
-$('#snapshotBtn')?.addEventListener('click', saveSnapshot);
-$('#historySnapshotBtn')?.addEventListener('click', saveSnapshot);
+$('#snapshotBtn')?.addEventListener('click', openMonthlyClose);
+$('#historySnapshotBtn')?.addEventListener('click', openMonthlyClose);
+$('#cancelMonthlyCloseBtn')?.addEventListener('click', () => { $('#monthlyCloseDialog').open = false; });
+$('#confirmMonthlyCloseBtn')?.addEventListener('click', confirmMonthlyClose);
+$('#monthlyCloseImportPortfolioBtn')?.addEventListener('click', () => { $('#monthlyCloseDialog').open = false; openImport(); });
+$('#monthlyCloseImportTxBtn')?.addEventListener('click', () => { $('#monthlyCloseDialog').open = false; openTransactionsImport(); });
+$('#monthlyCloseGoAssetsBtn')?.addEventListener('click', () => { $('#monthlyCloseDialog').open = false; switchView('settings'); });
 $('#assetForm')?.addEventListener('submit', addAsset);
 $('#liabilityForm')?.addEventListener('submit', addLiability);
 $('#settingsForm')?.addEventListener('submit', saveFinancialSettings);
