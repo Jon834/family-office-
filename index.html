@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="es" class="wa-theme-default">
 <head>
   <meta charset="utf-8">
@@ -105,6 +105,7 @@
 
     <section id="history" class="view">
       <div class="section-head"><div><p class="eyebrow">HISTORICO</p><h1>Cierres mensuales</h1><p>Cada cierre guarda cartera, liquidez, otros activos, deuda y patrimonio neto.</p></div><wa-button id="historySnapshotBtn" variant="brand"><wa-icon slot="start" name="camera"></wa-icon>Guardar cierre</wa-button></div>
+      <wa-card class="panel controls controls-wide history-filter-panel"><wa-select id="historyRangePreset" label="Rango rapido" value="all"><wa-option value="all">Todo el historico</wa-option><wa-option value="3m">Ultimos 3 meses</wa-option><wa-option value="6m">Ultimos 6 meses</wa-option><wa-option value="12m">Ultimos 12 meses</wa-option><wa-option value="24m">Ultimos 24 meses</wa-option><wa-option value="36m">Ultimos 36 meses</wa-option><wa-option value="ytd">Ano en curso</wa-option></wa-select><wa-select id="historyFromYear" label="Desde ano"><wa-option value="">Sin limite</wa-option></wa-select><wa-select id="historyToYear" label="Hasta ano"><wa-option value="">Sin limite</wa-option></wa-select><div class="history-filter-help muted-copy">Estos filtros afectan a los graficos de evolucion, benchmark y lectura macro.</div></wa-card>
       <wa-card class="panel">
         <div class="panel-head"><div><h2>Evolucion patrimonial</h2><p>Cartera y patrimonio neto a lo largo de los cierres guardados</p></div></div>
         <div id="historyChart" class="history-chart empty-state">Sin cierres mensuales</div>
@@ -178,3 +179,4 @@
   <div id="notice" class="notice" role="status" aria-live="polite"></div>
 </body>
 </html>
+

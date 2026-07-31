@@ -1,6 +1,30 @@
 const STORAGE_KEY = 'family-office-nunez-v2';
 const SCHEMA_VERSION = 6;
 const ACTIVE_STATUSES = new Set(['active', 'watch']);
+const ANALYSIS_PROMPT_PATH = './chatgpt-analysis-prompt.md';
+const DEFAULT_ANALYSIS_PROMPT = [
+  '# Analisis patrimonial para ChatGPT',
+  '',
+  'Actua como un analista patrimonial senior especializado en family offices, dividend growth, asignacion de capital y seguimiento de independencia financiera.',
+  '',
+  'Devuelve un analisis accionable, comparativo y priorizado. No inventes datos si faltan.',
+  '',
+  'Estructura obligatoria:',
+  '1. Resumen ejecutivo.',
+  '2. Puntuacion global 0-100.',
+  '3. Semaforo de concentracion por empresa, pais y sector.',
+  '4. Analisis de dividendos.',
+  '5. Analisis de liquidez y deuda.',
+  '6. Progreso hacia independencia financiera.',
+  '7. Riesgos principales.',
+  '8. Oportunidades principales.',
+  '9. Acciones recomendadas a 30 dias.',
+  '10. Acciones recomendadas a 90 dias.',
+  '11. Errores a evitar.',
+  '12. Preguntas criticas pendientes.',
+  '',
+  '{{PORTFOLIO_DATA}}'
+].join('\n');
 const DEFAULT_SETTINGS = {
   monthlyExpense: null,
   targetAnnualDividends: null,
@@ -124,6 +148,8 @@ let pendingTransactionImport = null;
 let confirmAction = null;
 let editingPositionId = null;
 let deferredWorker = null;
+let analysisPromptCache = null;
+const historyFilterState = { preset: 'all', fromYear: '', toYear: '' };
 let newWorker = null;
 
 function defaultState() {
@@ -854,10 +880,48 @@ function buildMacroCards(history, benchmark) {
     ]
   };
 }
+function historyYearOptions() {
+  const years = [...new Set((state.history || []).map(snapshot => new Date(snapshot.date).getFullYear()).filter(Number.isFinite))].sort((a, b) => a - b);
+  return years;
+}
+function renderHistoryFilterOptions() {
+  const years = historyYearOptions();
+  [['#historyFromYear', historyFilterState.fromYear], ['#historyToYear', historyFilterState.toYear]].forEach(([selector, current]) => {
+    const element = $(selector);
+    if (!element) return;
+    element.innerHTML = `<wa-option value="">Sin limite</wa-option>` + years.map(year => `<wa-option value="${year}">${year}</wa-option>`).join('');
+    element.value = years.map(String).includes(String(current)) ? String(current) : '';
+  });
+  if ($('#historyRangePreset')) $('#historyRangePreset').value = historyFilterState.preset || 'all';
+}
+function applyHistoryFilters(history) {
+  const chronological = [...history].sort((a, b) => new Date(a.date) - new Date(b.date));
+  if (!chronological.length) return [];
+  let filtered = [...chronological];
+  const preset = historyFilterState.preset || 'all';
+  if (preset === 'ytd') {
+    const latestYear = new Date(chronological.at(-1).date).getFullYear();
+    filtered = filtered.filter(snapshot => new Date(snapshot.date).getFullYear() === latestYear);
+  } else if (/^\d+m$/.test(preset)) {
+    const months = Number.parseInt(preset, 10);
+    const latestDate = new Date(chronological.at(-1).date);
+    const startDate = new Date(latestDate);
+    startDate.setMonth(startDate.getMonth() - (months - 1));
+    startDate.setDate(1);
+    filtered = filtered.filter(snapshot => new Date(snapshot.date) >= startDate);
+  }
+  const fromYear = Number.parseInt(historyFilterState.fromYear, 10);
+  const toYear = Number.parseInt(historyFilterState.toYear, 10);
+  if (Number.isFinite(fromYear)) filtered = filtered.filter(snapshot => new Date(snapshot.date).getFullYear() >= fromYear);
+  if (Number.isFinite(toYear)) filtered = filtered.filter(snapshot => new Date(snapshot.date).getFullYear() <= toYear);
+  return filtered;
+}
 function renderHistory() {
   const rows = sortRows(state.history, 'history');
   $('#historyRows').innerHTML = rows.length ? rows.map(snapshot => `<tr><td>${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(snapshot.date))}</td><td>${eur.format(snapshot.value)}</td><td>${eur.format(snapshot.netWorth || 0)}</td><td>${eur.format(snapshot.liquidity || 0)}</td><td>${eur.format(snapshot.debt || 0)}</td><td>${eur.format(snapshot.dividends)}</td><td>${snapshot.count}</td><td><wa-button size="small" appearance="plain" data-delete-snapshot="${snapshot.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="8" class="empty-cell">No hay cierres guardados.</td></tr>';
+  renderHistoryFilterOptions();
   const chronological = [...state.history].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const filteredChronological = applyHistoryFilters(chronological);
   const chart = $('#historyChart');
   const benchmarkChart = $('#benchmarkChart');
   const macroSummary = $('#macroSummary');
@@ -879,19 +943,36 @@ function renderHistory() {
     }
     return;
   }
-  const trendLabels = chronological.map(snapshot => formatMonthTick(snapshot.date));
+  if (!filteredChronological.length) {
+    chart.className = 'history-chart empty-state';
+    chart.textContent = 'No hay cierres dentro del filtro seleccionado';
+    if (benchmarkChart) {
+      benchmarkChart.className = 'history-chart empty-state';
+      benchmarkChart.textContent = 'No hay datos comparables en este rango';
+    }
+    if (macroSummary) {
+      macroSummary.className = 'summary-stack history-summary empty-state';
+      macroSummary.textContent = 'Sin datos macro en este rango';
+    }
+    if (macroChips) {
+      macroChips.className = 'macro-grid empty-state';
+      macroChips.textContent = 'Sin datos';
+    }
+    return;
+  }
+  const trendLabels = filteredChronological.map(snapshot => formatMonthTick(snapshot.date));
   chart.className = 'history-chart';
   chart.innerHTML = buildLineChart([
-    { label: 'Cartera', color: 'var(--chart-portfolio)', values: chronological.map(snapshot => snapshot.value || 0) },
-    { label: 'Patrimonio neto', color: 'var(--chart-networth)', values: chronological.map(snapshot => snapshot.netWorth || 0), dashed: true }
+    { label: 'Cartera', color: 'var(--chart-portfolio)', values: filteredChronological.map(snapshot => snapshot.value || 0) },
+    { label: 'Patrimonio neto', color: 'var(--chart-networth)', values: filteredChronological.map(snapshot => snapshot.netWorth || 0), dashed: true }
   ], trendLabels, { ariaLabel: 'Evolucion patrimonial' });
-  const benchmark = buildBenchmarkModel(chronological);
+  const benchmark = buildBenchmarkModel(filteredChronological);
   if (benchmarkChart) {
     benchmarkChart.className = 'history-chart';
     benchmarkChart.innerHTML = buildLineChart(benchmark.series, benchmark.labels, { ariaLabel: 'Benchmark de cartera en base 100' });
   }
   if (macroSummary && macroChips) {
-    const macro = buildMacroCards(chronological, benchmark);
+    const macro = buildMacroCards(filteredChronological, benchmark);
     macroSummary.className = 'summary-stack history-summary';
     macroSummary.innerHTML = macro.summary;
     macroChips.className = 'macro-grid';
@@ -926,7 +1007,125 @@ function saveSnapshot() { const portfolio = activePortfolio(); if (!portfolio.le
 function download(name, content, type) { const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([content], { type })); link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); }
 function exportJson() { download(`family-office-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(state, null, 2), 'application/json'); }
 function restoreJson(file) { const reader = new FileReader(); reader.onload = () => { try { const migrated = migrateState(JSON.parse(reader.result)); Object.assign(state, defaultState(), migrated); saveState(); render(); showNotice('Copia restaurada correctamente.'); } catch (error) { showNotice(`No se pudo restaurar: ${error.message}`); } }; reader.readAsText(file); }
-function markdown() { const portfolio = sortedPortfolio(activePortfolio()); const metrics = fullMetrics(portfolio); const sector = groupByValue(portfolio, 'sector', metrics.value); const country = groupByValue(portfolio, 'country', metrics.value); const score = portfolioScore(portfolio); const signals = concentrationSignals(portfolio); const scenarios = independenceScenarios(metrics); const lines = ['# Informe mensual Family Office Nunez', '', `Fecha del informe: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'long' }).format(new Date())}`, '', '## Resumen patrimonial', `- Valor de cartera: ${eur.format(metrics.value)}`, `- Coste invertido: ${eur.format(metrics.cost)}`, `- Plusvalia: ${eur.format(metrics.gain)}`, `- Dividendos anuales estimados: ${eur.format(metrics.dividends)}`, `- Liquidez registrada: ${eur.format(metrics.liquidity)}`, `- Otros activos: ${eur.format(metrics.otherAssets)}`, `- Deuda total: ${eur.format(metrics.liabilities)}`, `- Patrimonio neto: ${eur.format(metrics.netWorth)}`, '', '## Salud de la cartera', `- Puntuacion global: ${score.value}/100 (${score.label})`, ...signals.map(signal => `- Concentracion ${signal.title.toLowerCase()}: ${signal.name} con ${pct.format(signal.weight)} (${signal.label})`), '', '## Objetivos financieros', `- Gasto mensual objetivo: ${state.settings.monthlyExpense === null ? 'No configurado' : eur.format(state.settings.monthlyExpense)}`, `- Objetivo anual de dividendos: ${state.settings.targetAnnualDividends === null ? 'No configurado' : eur.format(state.settings.targetAnnualDividends)}`, `- Objetivo de patrimonio neto: ${state.settings.targetNetWorth === null ? 'No configurado' : eur.format(state.settings.targetNetWorth)}`, '', '## Escenarios de independencia financiera', ...(scenarios ? scenarios.map(s => `- ${s.label}: ${s.years === null ? 'mas de 40 anos' : `${s.years} anos`} | meta estimada ${s.eta}`) : ['- Configura el gasto mensual para obtener escenarios.']), '', '## Cartera', '| Empresa | Ticker | ISIN | Valor | Peso | Dividendo anual | Yield | YOC | Estado |', '|---|---|---|---:|---:|---:|---:|---:|---|', ...portfolio.map(position => `| ${position.name.replaceAll('|', '/')} | ${position.symbol} | ${position.isin} | ${eur.format(position.marketValue || 0)} | ${formatPercent(position.allocation)} | ${eur.format(position.annualDividend || 0)} | ${formatPercent(position.dividendYield)} | ${formatPercent(position.yieldOnCost)} | ${position.status} |`), '', '## Distribucion por sectores', ...sector.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`), '', '## Distribucion geografica', ...country.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`), '', '## Liquidez, activos y deuda', ...state.assets.map(asset => `- Activo ${asset.name} (${asset.type}): ${eur.format(asset.value || 0)}`), ...state.liabilities.map(liability => `- Deuda ${liability.name} (${liability.type}): ${eur.format(liability.value || 0)}`), '', '## Comentarios personales', '- Exportado desde la aplicacion local-first. Los datos permanecen en el dispositivo.']; const filename = `informe-family-office-${new Date().toISOString().slice(0, 10)}.md`; download(filename, lines.join('\n'), 'text/markdown'); saveReportHistoryEntry({ ...defaultReportEntry(), createdAt: new Date().toISOString(), score: score.value, netWorth: metrics.netWorth, dividends: metrics.dividends, concentrationLabel: score.concentrationLabel, filename }); saveState(); renderReportHistory(); showNotice('Informe generado y registrado en el historico.'); }
+async function loadAnalysisPromptTemplate() {
+  if (analysisPromptCache) return analysisPromptCache;
+  try {
+    const response = await fetch(ANALYSIS_PROMPT_PATH, { cache: 'no-cache' });
+    if (!response.ok) throw new Error(`Prompt no disponible: ${response.status}`);
+    analysisPromptCache = await response.text();
+  } catch (error) {
+    console.warn('Falling back to embedded analysis prompt', error);
+    analysisPromptCache = DEFAULT_ANALYSIS_PROMPT;
+  }
+  return analysisPromptCache;
+}
+function reportDeltaSection() {
+  const chronological = [...state.history].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const latest = chronological.at(-1);
+  const previous = chronological.at(-2);
+  if (!latest) return ['- Todavia no hay cierres mensuales guardados.'];
+  if (!previous) return [`- Ultimo cierre guardado: ${dateEs(String(latest.date).slice(0, 10))}.`];
+  return [
+    `- Ultimo cierre: ${dateEs(String(latest.date).slice(0, 10))}.`,
+    `- Variacion cartera: ${formatPercent(relativeDelta(latest.value || 0, previous.value || 0))}.`,
+    `- Variacion patrimonio neto: ${formatPercent(relativeDelta(latest.netWorth || 0, previous.netWorth || 0))}.`,
+    `- Variacion liquidez: ${formatPercent(relativeDelta(latest.liquidity || 0, previous.liquidity || 0))}.`,
+    `- Variacion deuda: ${formatPercent(relativeDelta(latest.debt || 0, previous.debt || 0))}.`
+  ];
+}
+function recentReportSummary() {
+  const reports = reportHistoryRows().slice(0, 3);
+  if (!reports.length) return ['- No hay informes anteriores registrados.'];
+  return reports.map(report => `- ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(report.createdAt))}: score ${report.score ?? '-'} | patrimonio ${report.netWorth === null ? '-' : eur.format(report.netWorth)} | dividendos ${report.dividends === null ? '-' : eur.format(report.dividends)} | concentracion ${report.concentrationLabel || '-'}.`);
+}
+function buildPortfolioDataMarkdown() {
+  const portfolio = sortedPortfolio(activePortfolio());
+  const metrics = fullMetrics(portfolio);
+  const sector = groupByValue(portfolio, 'sector', metrics.value);
+  const country = groupByValue(portfolio, 'country', metrics.value);
+  const score = portfolioScore(portfolio);
+  const signals = concentrationSignals(portfolio);
+  const scenarios = independenceScenarios(metrics);
+  const transactions = transactionRowsData();
+  const txAnalytics = transactionAnalytics(transactions);
+  return [
+    '# Datos patrimoniales exportados',
+    '',
+    `Fecha del informe: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'long' }).format(new Date())}`,
+    '',
+    '## Resumen patrimonial',
+    `- Valor de cartera: ${eur.format(metrics.value)}`,
+    `- Coste invertido: ${eur.format(metrics.cost)}`,
+    `- Plusvalia: ${eur.format(metrics.gain)}`,
+    `- Dividendos anuales estimados: ${eur.format(metrics.dividends)}`,
+    `- Liquidez registrada: ${eur.format(metrics.liquidity)}`,
+    `- Otros activos: ${eur.format(metrics.otherAssets)}`,
+    `- Deuda total: ${eur.format(metrics.liabilities)}`,
+    `- Patrimonio neto: ${eur.format(metrics.netWorth)}`,
+    '',
+    '## Salud de la cartera',
+    `- Puntuacion global: ${score.value}/100 (${score.label})`,
+    ...signals.map(signal => `- Concentracion ${signal.title.toLowerCase()}: ${signal.name} con ${pct.format(signal.weight)} (${signal.label})`),
+    '',
+    '## Objetivos financieros',
+    `- Gasto mensual objetivo: ${state.settings.monthlyExpense === null ? 'No configurado' : eur.format(state.settings.monthlyExpense)}`,
+    `- Objetivo anual de dividendos: ${state.settings.targetAnnualDividends === null ? 'No configurado' : eur.format(state.settings.targetAnnualDividends)}`,
+    `- Objetivo de patrimonio neto: ${state.settings.targetNetWorth === null ? 'No configurado' : eur.format(state.settings.targetNetWorth)}`,
+    `- Aportacion mensual prevista: ${state.settings.monthlyContribution === null ? 'No configurada' : eur.format(state.settings.monthlyContribution)}`,
+    '',
+    '## Escenarios de independencia financiera',
+    ...(scenarios ? scenarios.map(s => `- ${s.label}: ${s.years === null ? 'mas de 40 anos' : `${s.years} anos`} | meta estimada ${s.eta}`) : ['- Configura el gasto mensual para obtener escenarios.']),
+    '',
+    '## Cambios frente al cierre anterior',
+    ...reportDeltaSection(),
+    '',
+    '## Actividad de capital y transacciones',
+    `- Operaciones importadas: ${transactions.length}`,
+    `- Compras netas 12m: ${eur.format(txAnalytics.lastTwelveMonths.netAmount)}`,
+    `- Comisiones e impuestos acumulados: ${eur.format(txAnalytics.allTotals.costs)}`,
+    `- Plusvalia realizada estimada: ${eur.format(txAnalytics.realized)}`,
+    `- Ritmo medio de compras 6m: ${eur.format(txAnalytics.monthlyBuys)}`,
+    '',
+    '## Cartera',
+    '| Empresa | Ticker | ISIN | Valor | Peso | Dividendo anual | Yield | YOC | Estado |',
+    '|---|---|---|---:|---:|---:|---:|---:|---|',
+    ...portfolio.map(position => `| ${position.name.replaceAll('|', '/')} | ${position.symbol} | ${position.isin} | ${eur.format(position.marketValue || 0)} | ${formatPercent(position.allocation)} | ${eur.format(position.annualDividend || 0)} | ${formatPercent(position.dividendYield)} | ${formatPercent(position.yieldOnCost)} | ${position.status} |`),
+    '',
+    '## Distribucion por sectores',
+    ...sector.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`),
+    '',
+    '## Distribucion geografica',
+    ...country.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`),
+    '',
+    '## Liquidez, activos y deuda',
+    ...state.assets.map(asset => `- Activo ${asset.name} (${asset.type}): ${eur.format(asset.value || 0)}`),
+    ...state.liabilities.map(liability => `- Deuda ${liability.name} (${liability.type}): ${eur.format(liability.value || 0)}`),
+    '',
+    '## Historico de informes registrados',
+    ...recentReportSummary(),
+    '',
+    '## Comentarios personales',
+    '- Exportado desde la aplicacion local-first. Los datos permanecen en el dispositivo.'
+  ].join('\n');
+}
+function mergePromptWithData(template, dataBlock) {
+  const normalizedTemplate = cleanText(template) ? template : DEFAULT_ANALYSIS_PROMPT;
+  return normalizedTemplate.includes('{{PORTFOLIO_DATA}}') ? normalizedTemplate.replace('{{PORTFOLIO_DATA}}', dataBlock) : `${normalizedTemplate.trim()}\n\n---\n\n${dataBlock}`;
+}
+async function markdown() {
+  const portfolio = sortedPortfolio(activePortfolio());
+  const metrics = fullMetrics(portfolio);
+  const score = portfolioScore(portfolio);
+  const filename = `informe-family-office-${new Date().toISOString().slice(0, 10)}.md`;
+  const promptTemplate = await loadAnalysisPromptTemplate();
+  const dataBlock = buildPortfolioDataMarkdown();
+  const finalDocument = mergePromptWithData(promptTemplate, dataBlock);
+  download(filename, finalDocument, 'text/markdown');
+  saveReportHistoryEntry({ ...defaultReportEntry(), createdAt: new Date().toISOString(), score: score.value, netWorth: metrics.netWorth, dividends: metrics.dividends, concentrationLabel: score.concentrationLabel, filename });
+  saveState();
+  renderReportHistory();
+  showNotice('Informe generado con prompt editable y registrado en el historico.');
+}
 function askConfirm(message, onConfirm) {
   confirmAction = typeof onConfirm === 'function' ? onConfirm : null;
   $('#confirmText').textContent = message;
@@ -1094,7 +1293,7 @@ $('#jsonFile')?.addEventListener('change', event => {
   if (file) restoreJson(file);
   event.target.value = '';
 });
-$('#markdownBtn')?.addEventListener('click', markdown);
+$('#markdownBtn')?.addEventListener('click', () => { markdown().catch(error => { console.error(error); showNotice(`No se pudo generar el informe: ${error.message}`); }); });
 $('#clearBtn')?.addEventListener('click', () => {
   askConfirm('Se borraran cartera, cierres, activos, deudas, informes y configuracion local. Esta accion no se puede deshacer.', () => {
     Object.assign(state, defaultState());
@@ -1129,6 +1328,14 @@ $$('[data-go]').forEach(button => button.addEventListener('click', () => switchV
 ['#searchInput', '#sectorFilter', '#countryFilter', '#currencyFilter', '#statusFilter'].forEach(selector => {
   $(selector)?.addEventListener('input', renderPortfolio);
   $(selector)?.addEventListener('change', renderPortfolio);
+});
+['#historyRangePreset', '#historyFromYear', '#historyToYear'].forEach(selector => {
+  $(selector)?.addEventListener('change', event => {
+    if (selector === '#historyRangePreset') historyFilterState.preset = event.target.value || 'all';
+    if (selector === '#historyFromYear') historyFilterState.fromYear = event.target.value || '';
+    if (selector === '#historyToYear') historyFilterState.toYear = event.target.value || '';
+    renderHistory();
+  });
 });
 document.addEventListener('click', event => {
   const sortButton = event.target.closest('[data-sort-table]');
