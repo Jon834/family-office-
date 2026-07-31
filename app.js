@@ -719,6 +719,27 @@ function computePlan() {
   const feasibility = targetValue === null || targetValue === undefined ? null : central.years === null ? 'poco-realista' : central.years <= horizonYears ? 'alcanzable' : central.years <= horizonYears * 1.5 ? 'ajustado' : 'poco-realista';
   return { targetType, targetValue: targetValue ?? null, monthlyContribution, monthlyExpense, horizonYears, currentValue, gap, scenarios, central, levers, bestLever, feasibility, metrics };
 }
+const PLAN_TARGET_TYPES = [
+  { id: 'fi', label: 'Independencia financiera' },
+  { id: 'networth', label: 'Patrimonio neto' },
+  { id: 'dividends', label: 'Dividendos anuales' }
+];
+function computePlanForType(targetType, metrics, monthlyContribution, monthlyExpense, horizonYears) {
+  const targetValue = targetType === 'networth' ? state.settings.targetNetWorth : targetType === 'dividends' ? state.settings.targetAnnualDividends : (monthlyExpense ? monthlyExpense * 12 : null);
+  const currentValue = targetType === 'networth' ? metrics.netWorth : metrics.dividends;
+  const gap = targetValue === null || targetValue === undefined ? null : Math.max(0, targetValue - currentValue);
+  const central = projectPlanScenario(planScenarioDefs()[1], metrics, targetType, targetValue, monthlyContribution, horizonYears);
+  const feasibility = targetValue === null || targetValue === undefined ? null : central.years === null ? 'poco-realista' : central.years <= horizonYears ? 'alcanzable' : central.years <= horizonYears * 1.5 ? 'ajustado' : 'poco-realista';
+  return { targetType, targetValue: targetValue ?? null, gap, central, feasibility };
+}
+function planComparisonRows() {
+  ensurePlanState();
+  const metrics = fullMetrics();
+  const monthlyContribution = state.plan.monthlyContribution ?? state.settings.monthlyContribution;
+  const monthlyExpense = state.plan.monthlyExpense ?? state.settings.monthlyExpense;
+  const horizonYears = state.plan.horizonYears || 15;
+  return PLAN_TARGET_TYPES.map(type => ({ ...type, ...computePlanForType(type.id, metrics, monthlyContribution, monthlyExpense, horizonYears) }));
+}
 function renderPlan() {
   const narrativeNode = $('#planNarrative');
   if (!narrativeNode) return;
@@ -734,6 +755,13 @@ function renderPlan() {
   const horizonInput = $('#planHorizonYears');
   if (horizonInput) horizonInput.value = state.plan.horizonYears ?? '';
   const plan = computePlan();
+  const comparisonNode = $('#planComparisonRows');
+  if (comparisonNode) {
+    const comparison = planComparisonRows();
+    const feasibilityLabelsShort = { alcanzable: 'Alcanzable', ajustado: 'Ajustado', 'poco-realista': 'Poco realista' };
+    comparisonNode.className = 'scenario-list';
+    comparisonNode.innerHTML = comparison.map(item => `<div class="scenario-card${item.targetType === plan.targetType ? ' active' : ''}"><strong>${escapeHtml(item.label)}</strong><span>${item.targetValue === null ? 'Sin objetivo configurado' : eur.format(item.targetValue)}</span><small>${item.targetValue === null ? 'Configuralo en Datos u objetivo especifico.' : `Brecha: ${eur.format(item.gap)}`}</small><small>${item.central.years === null ? 'Mas de 40 anos' : `${item.central.years} anos (${item.central.eta})`} | ${item.feasibility ? feasibilityLabelsShort[item.feasibility] : 'Sin datos'}</small></div>`).join('');
+  }
   const targetLabel = plan.targetType === 'networth' ? 'patrimonio neto' : plan.targetType === 'dividends' ? 'dividendos anuales' : 'independencia financiera (dividendos vs. gasto)';
   const hasTarget = plan.targetValue !== null;
   $('#planGapValue').textContent = hasTarget ? eur.format(plan.gap) : '0 EUR';
@@ -1446,20 +1474,23 @@ $$('[data-go]').forEach(button => button.addEventListener('click', () => switchV
     renderHistory();
   });
 });
+function applyPlanFormValues() {
+  ensurePlanState();
+  state.plan = {
+    targetType: ['fi', 'networth', 'dividends'].includes($('#planTargetType')?.value) ? $('#planTargetType').value : state.plan.targetType,
+    targetValue: parseLocaleNumber($('#planTargetValue')?.value),
+    monthlyContribution: parseLocaleNumber($('#planMonthlyContribution')?.value),
+    monthlyExpense: parseLocaleNumber($('#planMonthlyExpense')?.value),
+    horizonYears: toNum($('#planHorizonYears')?.value, state.plan.horizonYears) || state.plan.horizonYears
+  };
+  saveState();
+  renderPlan();
+  showNotice('Prevision actualizada.');
+}
 ['#planTargetType', '#planTargetValue', '#planMonthlyContribution', '#planMonthlyExpense', '#planHorizonYears'].forEach(selector => {
-  $(selector)?.addEventListener('change', () => {
-    ensurePlanState();
-    state.plan = {
-      targetType: ['fi', 'networth', 'dividends'].includes($('#planTargetType')?.value) ? $('#planTargetType').value : state.plan.targetType,
-      targetValue: parseLocaleNumber($('#planTargetValue')?.value),
-      monthlyContribution: parseLocaleNumber($('#planMonthlyContribution')?.value),
-      monthlyExpense: parseLocaleNumber($('#planMonthlyExpense')?.value),
-      horizonYears: toNum($('#planHorizonYears')?.value, state.plan.horizonYears) || state.plan.horizonYears
-    };
-    saveState();
-    renderPlan();
-  });
+  $(selector)?.addEventListener('change', applyPlanFormValues);
 });
+$('#planSimulateBtn')?.addEventListener('click', applyPlanFormValues);
 document.addEventListener('click', event => {
   const sortButton = event.target.closest('[data-sort-table]');
   if (sortButton) { toggleTableSort(sortButton.dataset.sortTable, sortButton.dataset.sortKey); return; }

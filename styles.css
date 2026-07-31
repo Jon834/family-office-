@@ -941,6 +941,11 @@ td {
   padding: 14px 16px;
 }
 
+.scenario-card.active {
+  border: 1px solid var(--orange);
+  background: var(--orange-pale);
+}
+
 .scenario-card strong {
   color: var(--slate-deep);
 }
