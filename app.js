@@ -1482,3 +1482,613 @@ if (transactionsDropZone) {
 }
 saveState();
 render();
+
+
+function defaultPlanState() {
+  return {
+    targetType: 'fi',
+    targetValue: null,
+    monthlyContribution: state.settings?.monthlyContribution ?? 0,
+    monthlyExpense: state.settings?.monthlyExpense ?? 0,
+    horizonYears: 30
+  };
+}
+function ensurePlanState() {
+  const current = state.plan && typeof state.plan === 'object' ? state.plan : {};
+  state.plan = {
+    ...defaultPlanState(),
+    ...current,
+    monthlyContribution: toNum(current.monthlyContribution, state.settings?.monthlyContribution ?? 0) ?? 0,
+    monthlyExpense: toNum(current.monthlyExpense, state.settings?.monthlyExpense ?? 0) ?? 0,
+    targetValue: toNum(current.targetValue, null),
+    horizonYears: Math.max(5, Math.min(50, Math.round(toNum(current.horizonYears, 30) ?? 30)))
+  };
+}
+function planTargetLabel(targetType) {
+  return targetType === 'networth' ? 'Patrimonio neto' : targetType === 'dividends' ? 'Dividendos anuales' : 'Cobertura anual por dividendos';
+}
+function suggestedPlanTargetValue(targetType, overrides = {}) {
+  const metrics = fullMetrics();
+  const monthlyExpense = overrides.monthlyExpense ?? state.plan?.monthlyExpense ?? state.settings?.monthlyExpense ?? 0;
+  if (targetType === 'networth') return state.settings.targetNetWorth || Math.max(metrics.netWorth * 1.5, metrics.netWorth + 50000, 100000);
+  if (targetType === 'dividends') return state.settings.targetAnnualDividends || Math.max(metrics.dividends * 1.5, 12000);
+  return monthlyExpense > 0 ? monthlyExpense * 12 : Math.max(metrics.dividends * 1.8, 24000);
+}
+function resolvePlanTargetValue() {
+  ensurePlanState();
+  return state.plan.targetValue && state.plan.targetValue > 0 ? state.plan.targetValue : suggestedPlanTargetValue(state.plan.targetType, { monthlyExpense: state.plan.monthlyExpense });
+}
+function scenarioPlanDefinitions() {
+  return [
+    { id: 'prudente', label: 'Prudente', marketReturn: 0.04, dividendGrowth: 0.02, color: 'var(--chart-rate)' },
+    { id: 'central', label: 'Central', marketReturn: 0.06, dividendGrowth: 0.04, color: 'var(--chart-portfolio)' },
+    { id: 'favorable', label: 'Favorable', marketReturn: 0.08, dividendGrowth: 0.06, color: 'var(--chart-euronext)' }
+  ];
+}
+function buildPlanScenario(definition, leverage = {}) {
+  ensurePlanState();
+  const metrics = fullMetrics();
+  const assetBase = assetTotals();
+  const targetType = state.plan.targetType;
+  const monthlyContribution = Math.max(0, (state.plan.monthlyContribution || 0) + (leverage.extraContribution || 0));
+  const monthlyExpense = Math.max(0, (state.plan.monthlyExpense || 0) * (1 - (leverage.expenseReductionPct || 0)));
+  const targetValue = targetType === 'fi' ? monthlyExpense * 12 : resolvePlanTargetValue();
+  const horizonYears = state.plan.horizonYears || 30;
+  const baseYield = Math.max(metrics.yield || 0.035, 0.015) + (leverage.yieldBoost || 0);
+  let portfolioValue = metrics.value;
+  let dividends = metrics.dividends;
+  let netWorth = metrics.netWorth;
+  const annualContribution = monthlyContribution * 12;
+  const labels = ['Hoy'];
+  const progressSeries = [];
+  let reachedYear = null;
+  for (let year = 0; year <= horizonYears; year += 1) {
+    const currentValue = targetType === 'networth' ? netWorth : dividends;
+    const progress = targetValue > 0 ? (currentValue / targetValue) * 100 : 0;
+    progressSeries.push(Number(progress.toFixed(2)));
+    if (reachedYear === null && currentValue >= targetValue && targetValue > 0) reachedYear = year;
+    if (year === horizonYears) break;
+    labels.push(`+${year + 1}a`);
+    portfolioValue = (portfolioValue + annualContribution) * (1 + definition.marketReturn);
+    dividends = Math.max(dividends * (1 + definition.dividendGrowth), portfolioValue * baseYield);
+    netWorth = portfolioValue + assetBase.assets - assetBase.liabilities;
+  }
+  const status = reachedYear !== null && reachedYear <= 10 ? 'Meta alcanzable' : reachedYear !== null && reachedYear <= 20 ? 'En marcha' : reachedYear !== null ? 'Largo plazo' : 'No llega en horizonte';
+  const eta = reachedYear === null ? `Mas de ${horizonYears} anos` : String(2026 + reachedYear);
+  const finalValue = targetType === 'networth' ? netWorth : dividends;
+  return {
+    id: definition.id,
+    label: definition.label,
+    status,
+    years: reachedYear,
+    eta,
+    targetValue,
+    progressNow: progressSeries[0] || 0,
+    finalProgress: progressSeries.at(-1) || 0,
+    labels,
+    series: progressSeries,
+    finalValue,
+    monthlyContribution,
+    monthlyExpense,
+    color: definition.color,
+    marketReturn: definition.marketReturn,
+    dividendGrowth: definition.dividendGrowth
+  };
+}
+
+function buildPlanLeverComparisons(baseCentral) {
+  const levers = [
+    { id: 'contribution', title: 'Aportar 300 EUR mas al mes', leverage: { extraContribution: 300 } },
+    { id: 'expense', title: 'Reducir gasto un 10 %', leverage: { expenseReductionPct: 0.1 } },
+    { id: 'yield', title: 'Mejorar yield en 0,5 puntos', leverage: { yieldBoost: 0.005 } }
+  ];
+  return levers.map(item => {
+    const scenario = buildPlanScenario(scenarioPlanDefinitions()[1], item.leverage);
+    const savedYears = baseCentral.years === null || scenario.years === null ? null : Math.max(0, baseCentral.years - scenario.years);
+    return { ...item, scenario, savedYears };
+  });
+}
+function renderPlan() {
+  ensurePlanState();
+  const planSection = $('#plan');
+  if (!planSection) return;
+  const metrics = fullMetrics();
+  const portfolio = activePortfolio();
+  $('#planTargetType').value = state.plan.targetType;
+  $('#planMonthlyContribution').value = state.plan.monthlyContribution ?? '';
+  $('#planMonthlyExpense').value = state.plan.monthlyExpense ?? '';
+  $('#planHorizonYears').value = state.plan.horizonYears ?? 30;
+  const resolvedTargetValue = resolvePlanTargetValue();
+  $('#planTargetValue').value = resolvedTargetValue ? Number(resolvedTargetValue.toFixed(2)) : '';
+  if (!portfolio.length) {
+    ['#planScenarioRows', '#planLeverRows', '#planProjectionChart', '#planNarrative', '#planAssumptions'].forEach(selector => {
+      const node = $(selector);
+      if (!node) return;
+      node.className = node.id === 'planProjectionChart' ? 'history-chart empty-state' : 'summary-stack empty-state';
+      node.textContent = 'Importa una cartera para calcular escenarios.';
+    });
+    $('#planGapValue').textContent = eur.format(0);
+    $('#planGapMeta').textContent = 'Sin cartera importada.';
+    $('#planCentralEta').textContent = '--';
+    $('#planCentralMeta').textContent = 'Sin proyeccion.';
+    $('#planBestLeverValue').textContent = '--';
+    $('#planBestLeverMeta').textContent = 'Sin comparativa.';
+    $('#planFeasibilityValue').textContent = '--';
+    $('#planFeasibilityMeta').textContent = 'Importa datos y define objetivos.';
+    return;
+  }
+  const scenarios = scenarioPlanDefinitions().map(def => buildPlanScenario(def));
+  const central = scenarios.find(item => item.id === 'central') || scenarios[0];
+  const leverComparisons = buildPlanLeverComparisons(central);
+  const bestLever = [...leverComparisons].sort((a, b) => (b.savedYears ?? -1) - (a.savedYears ?? -1))[0] || null;
+  const targetLabel = planTargetLabel(state.plan.targetType);
+  const currentValue = state.plan.targetType === 'networth' ? metrics.netWorth : metrics.dividends;
+  const gap = Math.max(0, resolvedTargetValue - currentValue);
+  $('#planGapValue').textContent = eur.format(gap);
+  $('#planGapMeta').textContent = `${targetLabel}: ${eur.format(resolvedTargetValue)} | nivel actual ${eur.format(currentValue)}.`;
+  $('#planCentralEta').textContent = central.years === null ? `>${state.plan.horizonYears}a` : `${central.years} anos`;
+  $('#planCentralMeta').textContent = `ETA estimada ${central.eta} con aportacion mensual de ${eur.format(central.monthlyContribution)}.`;
+  $('#planBestLeverValue').textContent = bestLever?.savedYears ? `${bestLever.savedYears} anos` : '--';
+  $('#planBestLeverMeta').textContent = bestLever?.savedYears ? `${bestLever.title} seria la mejor palanca en el escenario central.` : 'Ninguna palanca acorta el plazo dentro del horizonte actual.';
+  $('#planFeasibilityValue').textContent = central.years === null ? 'Exigente' : central.years <= 10 ? 'Alta' : central.years <= 20 ? 'Media' : 'Largo plazo';
+  $('#planFeasibilityMeta').textContent = central.years === null ? `Con este plan no se alcanza la meta en ${state.plan.horizonYears} anos.` : `Escenario central con objetivo ${targetLabel.toLowerCase()} estimado para ${central.eta}.`;
+  const scenarioRows = $('#planScenarioRows');
+  scenarioRows.className = 'scenario-list';
+  scenarioRows.innerHTML = scenarios.map(item => `<div class="scenario-card"><strong>${item.label}</strong><span>${item.status}</span><small>${item.years === null ? `Mas de ${state.plan.horizonYears} anos` : `${item.years} anos`}</small><small>Meta estimada: ${item.eta}</small><small>Progreso final: ${num.format(item.finalProgress)} %</small></div>`).join('');
+  const leverRows = $('#planLeverRows');
+  leverRows.className = 'signal-list';
+  leverRows.innerHTML = leverComparisons.map(item => {
+    const tone = item.savedYears === null ? 'warn' : item.savedYears >= 3 ? 'good' : item.savedYears >= 1 ? 'warn' : 'risk';
+    const summary = item.savedYears === null ? item.scenario.years === null ? 'No cambia lo suficiente dentro del horizonte.' : `Llegarias en ${item.scenario.years} anos.` : item.savedYears > 0 ? `Acortaria el plazo en ${item.savedYears} anos.` : 'Impacto marginal sobre el plazo.';
+    return `<div class="signal-row signal-${tone}"><strong>${item.title}</strong><span>${summary}</span><small>Escenario central ajustado: ${item.scenario.eta}.</small></div>`;
+  }).join('');
+  const projectionChart = $('#planProjectionChart');
+  projectionChart.className = 'history-chart';
+  projectionChart.innerHTML = buildLineChart(scenarios.map(item => ({ label: item.label, color: item.color, values: item.series, dashed: item.id !== 'central' })), central.labels, { ariaLabel: 'Trayectoria proyectada del plan en porcentaje del objetivo' });
+  const narrative = $('#planNarrative');
+  narrative.className = 'summary-stack';
+  narrative.innerHTML = `<strong>${targetLabel} en foco</strong><small>${central.years === null ? `Con las hipotesis actuales no alcanzarias la meta antes de ${2026 + state.plan.horizonYears}.` : `Si mantienes el plan actual, el escenario central apunta a ${central.eta}. El prudente exige mas paciencia y el favorable valida que una mejora pequena en ejecucion puede adelantar la fecha.`}</small>`;
+  const assumptions = $('#planAssumptions');
+  assumptions.className = 'signal-list';
+  assumptions.innerHTML = scenarios.map(item => `<div class="signal-row signal-${item.id === 'prudente' ? 'warn' : item.id === 'favorable' ? 'good' : 'risk'}"><strong>${item.label}</strong><span>Rentabilidad ${num.format(item.marketReturn * 100)} % | crecimiento dividendo ${num.format(item.dividendGrowth * 100)} %</span><small>Aportacion mensual usada: ${eur.format(item.monthlyContribution)}. Objetivo: ${eur.format(item.targetValue)}.</small></div>`).join('');
+}
+function bindPlanControls() {
+  const controls = ['#planTargetType', '#planTargetValue', '#planMonthlyContribution', '#planMonthlyExpense', '#planHorizonYears'];
+  controls.forEach(selector => {
+    $(selector)?.addEventListener('change', event => {
+      ensurePlanState();
+      if (selector === '#planTargetType') {
+        state.plan.targetType = event.target.value || 'fi';
+        state.plan.targetValue = suggestedPlanTargetValue(state.plan.targetType, { monthlyExpense: state.plan.monthlyExpense });
+      } else if (selector === '#planTargetValue') state.plan.targetValue = parseLocaleNumber(event.target.value) || suggestedPlanTargetValue(state.plan.targetType, { monthlyExpense: state.plan.monthlyExpense });
+      else if (selector === '#planMonthlyContribution') state.plan.monthlyContribution = parseLocaleNumber(event.target.value) || 0;
+      else if (selector === '#planMonthlyExpense') {
+        state.plan.monthlyExpense = parseLocaleNumber(event.target.value) || 0;
+        if (state.plan.targetType === 'fi') state.plan.targetValue = suggestedPlanTargetValue('fi', { monthlyExpense: state.plan.monthlyExpense });
+      } else if (selector === '#planHorizonYears') state.plan.horizonYears = Math.max(5, Math.min(50, Math.round(Number(event.target.value) || 30)));
+      saveState();
+      renderPlan();
+    });
+    $(selector)?.addEventListener('input', event => {
+      if (selector === '#planTargetType') return;
+      if (selector === '#planTargetValue' || selector === '#planMonthlyContribution' || selector === '#planMonthlyExpense' || selector === '#planHorizonYears') {
+        // lightweight live refresh without persisting malformed intermediates
+        const value = event.target.value;
+        if (selector === '#planTargetValue' && value === '') { state.plan.targetValue = suggestedPlanTargetValue(state.plan.targetType, { monthlyExpense: state.plan.monthlyExpense }); renderPlan(); }
+      }
+    });
+  });
+}
+function render() { applyTheme(); renderDashboard(); renderPortfolio(); renderTransactions(); renderHistory(); renderPlan(); renderFilters(); renderAssets(); renderLiabilities(); renderSettings(); renderUndoState(); renderBackupStatus(); renderReportHistory(); renderSortableHeaders(); }
+ensurePlanState();
+bindPlanControls();
+render();
+
+function defaultAdvisorState() {
+  return {
+    minimumLiquidityTarget: state.settings?.monthlyExpense ? state.settings.monthlyExpense * 6 : 15000,
+    upcomingDebt: 0,
+    upcomingDebtMonths: 12,
+    savingsCapacity: state.settings?.monthlyContribution ?? 1000,
+    emergencyFundTarget: state.settings?.monthlyExpense ? state.settings.monthlyExpense * 6 : 12000
+  };
+}
+function defaultOptionPosition() {
+  return {
+    id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    underlying: '',
+    ticker: '',
+    isin: '',
+    optionType: 'put',
+    strategy: 'cash-secured-put',
+    objective: 'acquire',
+    openedAt: new Date().toISOString().slice(0, 10),
+    expiration: '',
+    strike: null,
+    contracts: 1,
+    multiplier: 100,
+    premiumPerShare: null,
+    fees: 0,
+    collateral: null,
+    status: 'open',
+    thesis: '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+function migrateOptionPosition(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  return {
+    ...defaultOptionPosition(),
+    ...entry,
+    underlying: cleanText(entry.underlying),
+    ticker: cleanText(entry.ticker).toUpperCase(),
+    isin: normalizeIsin(entry.isin),
+    optionType: cleanText(entry.optionType).toLowerCase() === 'call' ? 'call' : 'put',
+    strategy: cleanText(entry.strategy) || 'cash-secured-put',
+    objective: cleanText(entry.objective) || 'acquire',
+    openedAt: normalizeDate(entry.openedAt) || new Date().toISOString().slice(0, 10),
+    expiration: normalizeDate(entry.expiration),
+    strike: toNum(entry.strike, null),
+    contracts: Math.max(1, Math.round(toNum(entry.contracts, 1) || 1)),
+    multiplier: Math.max(1, Math.round(toNum(entry.multiplier, 100) || 100)),
+    premiumPerShare: toNum(entry.premiumPerShare, null),
+    fees: toNum(entry.fees, 0) || 0,
+    collateral: toNum(entry.collateral, null),
+    status: cleanText(entry.status) || 'open',
+    thesis: cleanText(entry.thesis),
+    updatedAt: entry.updatedAt || new Date().toISOString()
+  };
+}
+function ensureAdvisoryState() {
+  state.advisor = { ...defaultAdvisorState(), ...(state.advisor && typeof state.advisor === 'object' ? state.advisor : {}) };
+  state.advisor.minimumLiquidityTarget = toNum(state.advisor.minimumLiquidityTarget, defaultAdvisorState().minimumLiquidityTarget) || 0;
+  state.advisor.upcomingDebt = toNum(state.advisor.upcomingDebt, 0) || 0;
+  state.advisor.upcomingDebtMonths = Math.max(0, Math.round(toNum(state.advisor.upcomingDebtMonths, 12) || 12));
+  state.advisor.savingsCapacity = toNum(state.advisor.savingsCapacity, state.settings?.monthlyContribution ?? 1000) || 0;
+  state.advisor.emergencyFundTarget = toNum(state.advisor.emergencyFundTarget, defaultAdvisorState().emergencyFundTarget) || 0;
+  state.options = Array.isArray(state.options) ? state.options.map(migrateOptionPosition).filter(Boolean) : [];
+  state.recommendations = Array.isArray(state.recommendations) ? state.recommendations.filter(Boolean) : [];
+  state.decisionReviews = Array.isArray(state.decisionReviews) ? state.decisionReviews.filter(Boolean) : [];
+}
+function defaultState() {
+  return { schemaVersion: SCHEMA_VERSION, portfolio: [], transactions: [], options: [], recommendations: [], decisionReviews: [], advisor: { ...defaultAdvisorState() }, history: [], backups: [], assets: [], liabilities: [], reportHistory: [], settings: { ...DEFAULT_SETTINGS }, tableSorts: defaultTableSorts(), lastImport: null, lastTransactionsImport: null, lastBackupAt: null, lastImportUndo: null, theme: 'light' };
+}
+function migrateState(raw) {
+  const base = defaultState();
+  if (!raw || typeof raw !== 'object') return base;
+  return {
+    ...base,
+    ...raw,
+    schemaVersion: SCHEMA_VERSION,
+    portfolio: Array.isArray(raw.portfolio) ? raw.portfolio.map(migratePosition).filter(Boolean) : [],
+    transactions: Array.isArray(raw.transactions) ? raw.transactions.map(migrateTransaction).filter(Boolean) : [],
+    options: Array.isArray(raw.options) ? raw.options.map(migrateOptionPosition).filter(Boolean) : [],
+    recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.filter(Boolean) : [],
+    decisionReviews: Array.isArray(raw.decisionReviews) ? raw.decisionReviews.filter(Boolean) : [],
+    advisor: { ...defaultAdvisorState(), ...(raw.advisor && typeof raw.advisor === 'object' ? raw.advisor : {}) },
+    history: Array.isArray(raw.history) ? raw.history.map(migrateSnapshot).filter(Boolean) : [],
+    backups: Array.isArray(raw.backups) ? raw.backups.map(migrateBackup).filter(Boolean).slice(0, 10) : [],
+    assets: Array.isArray(raw.assets) ? raw.assets.map(migrateAsset).filter(Boolean) : [],
+    liabilities: Array.isArray(raw.liabilities) ? raw.liabilities.map(migrateLiability).filter(Boolean) : [],
+    reportHistory: Array.isArray(raw.reportHistory) ? raw.reportHistory.map(migrateReportEntry).filter(Boolean).slice(0, 24) : [],
+    settings: migrateSettings(raw.settings),
+    tableSorts: migrateTableSorts(raw.tableSorts),
+    lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null,
+    lastTransactionsImport: raw.lastTransactionsImport || null,
+    theme: raw.theme === 'dark' ? 'dark' : 'light'
+  };
+}
+function cloneSnapshot() {
+  return JSON.parse(JSON.stringify({ portfolio: state.portfolio, transactions: state.transactions, options: state.options, recommendations: state.recommendations, decisionReviews: state.decisionReviews, advisor: state.advisor, history: state.history, assets: state.assets, liabilities: state.liabilities, reportHistory: state.reportHistory, settings: state.settings, lastImport: state.lastImport, lastTransactionsImport: state.lastTransactionsImport, lastBackupAt: state.lastBackupAt }));
+}
+function optionDerived(option) {
+  const contracts = option.contracts || 0;
+  const multiplier = option.multiplier || 100;
+  const grossPremium = (option.premiumPerShare || 0) * contracts * multiplier;
+  const netPremium = grossPremium - (option.fees || 0);
+  const capitalCommitted = option.collateral !== null && option.collateral !== undefined ? option.collateral : (option.strike || 0) * contracts * multiplier;
+  const effectiveEntry = option.optionType === 'put' && contracts * multiplier ? (option.strike || 0) - (netPremium / (contracts * multiplier)) : null;
+  return { grossPremium, netPremium, capitalCommitted, effectiveEntry };
+}
+function optionsSummary() {
+  const open = state.options.filter(option => ['open', 'rolled'].includes(option.status));
+  const totalCollateral = open.reduce((sum, option) => sum + optionDerived(option).capitalCommitted, 0);
+  const totalPremium = state.options.reduce((sum, option) => sum + optionDerived(option).netPremium, 0);
+  const openPremium = open.reduce((sum, option) => sum + optionDerived(option).netPremium, 0);
+  const expiringSoon = open.filter(option => option.expiration && (new Date(option.expiration) - new Date()) / 86400000 <= 45).sort((a, b) => new Date(a.expiration) - new Date(b.expiration));
+  const assignedPotential = open.filter(option => option.optionType === 'put').reduce((sum, option) => sum + ((option.strike || 0) * (option.contracts || 0) * (option.multiplier || 100)), 0);
+  return { open, totalCollateral, totalPremium, openPremium, expiringSoon, assignedPotential };
+}
+function computeDividendTrend() {
+  const chronological = [...state.history].sort((a, b) => new Date(a.date) - new Date(b.date));
+  if (!chronological.length) return { growth12m: null, latest: fullMetrics().dividends };
+  const latest = chronological.at(-1).dividends || fullMetrics().dividends;
+  const yearAgo = chronological.find(snapshot => snapshot.date >= `${new Date().getFullYear() - 1}-01-01`) || chronological[0];
+  const base = yearAgo?.dividends || 0;
+  return { growth12m: base ? (latest - base) / base : null, latest };
+}
+function advisorSignals() {
+  ensureAdvisoryState();
+  const metrics = fullMetrics();
+  const options = optionsSummary();
+  const concentration = concentrationSignals();
+  const dividendTrend = computeDividendTrend();
+  const liquidityAvailable = Math.max(0, metrics.liquidity - options.totalCollateral);
+  const baselineReserve = Math.max(state.advisor.minimumLiquidityTarget || 0, state.advisor.emergencyFundTarget || 0, (state.settings.monthlyExpense || 0) * 6);
+  const mortgageOverlay = state.advisor.upcomingDebtMonths <= 12 ? Math.min(state.advisor.upcomingDebt * 0.08, 60000) : 0;
+  const requiredLiquidity = baselineReserve + mortgageOverlay;
+  const debtRatio = metrics.netWorth > 0 ? (metrics.liabilities + state.advisor.upcomingDebt) / (metrics.netWorth + metrics.liabilities + state.advisor.upcomingDebt) : 0;
+  const committedLiquidityRatio = metrics.liquidity > 0 ? options.totalCollateral / metrics.liquidity : 0;
+  const savingsRatio = state.settings.monthlyExpense ? state.advisor.savingsCapacity / state.settings.monthlyExpense : null;
+  const signals = [
+    { id: 'liquidity', title: 'Liquidez', name: eur.format(liquidityAvailable), detail: `Objetivo dinamico ${eur.format(requiredLiquidity)} tras descontar garantias.`, tone: liquidityAvailable >= requiredLiquidity ? 'good' : liquidityAvailable >= requiredLiquidity * 0.75 ? 'warn' : 'risk' },
+    { id: 'debt', title: 'Deuda', name: `${num.format(debtRatio * 100)} %`, detail: `Incluye deuda actual y futura prevista por ${eur.format(state.advisor.upcomingDebt)}.`, tone: debtRatio < 0.35 ? 'good' : debtRatio < 0.55 ? 'warn' : 'risk' },
+    { id: 'savings', title: 'Capacidad de ahorro', name: eur.format(state.advisor.savingsCapacity), detail: savingsRatio === null ? 'Sin gasto mensual configurado.' : `Equivale al ${num.format(savingsRatio * 100)} % del gasto mensual.`, tone: savingsRatio === null ? 'warn' : savingsRatio >= 0.35 ? 'good' : savingsRatio >= 0.15 ? 'warn' : 'risk' },
+    { id: 'company', title: 'Concentracion empresa', name: concentration[0]?.name || 'Sin dato', detail: concentration[0] ? `${formatPercent(concentration[0].weight)} del patrimonio invertido.` : 'Sin datos.', tone: concentration[0]?.tone || 'warn' },
+    { id: 'country', title: 'Concentracion pais', name: concentration[1]?.name || 'Sin dato', detail: concentration[1] ? `${formatPercent(concentration[1].weight)} de la cartera.` : 'Sin datos.', tone: concentration[1]?.tone || 'warn' },
+    { id: 'sector', title: 'Concentracion sector', name: concentration[2]?.name || 'Sin dato', detail: concentration[2] ? `${formatPercent(concentration[2].weight)} de la cartera.` : 'Sin datos.', tone: concentration[2]?.tone || 'warn' },
+    { id: 'dividends', title: 'Sostenibilidad del dividendo', name: dividendTrend.growth12m === null ? eur.format(dividendTrend.latest) : formatPercent(dividendTrend.growth12m), detail: dividendTrend.growth12m === null ? 'Faltan cierres para medir el crecimiento interanual.' : 'Crecimiento del dividendo frente a 12 meses.', tone: dividendTrend.growth12m === null ? 'warn' : dividendTrend.growth12m > 0.05 ? 'good' : dividendTrend.growth12m > 0 ? 'warn' : 'risk' },
+    { id: 'options', title: 'Opciones', name: eur.format(options.totalCollateral), detail: metrics.liquidity ? `${formatPercent(committedLiquidityRatio)} de la liquidez comprometida en garantias.` : 'Sin liquidez registrada.', tone: committedLiquidityRatio < 0.25 ? 'good' : committedLiquidityRatio < 0.45 ? 'warn' : 'risk' }
+  ];
+  return { signals, liquidityAvailable, requiredLiquidity, debtRatio, options, dividendTrend };
+}
+function buildRecommendations() {
+  const { signals, liquidityAvailable, requiredLiquidity, debtRatio, options, dividendTrend } = advisorSignals();
+  const topPositions = sortedPortfolio().slice(0, 5);
+  const generated = [];
+  if (liquidityAvailable < requiredLiquidity) generated.push({ id: 'liq-buffer', title: 'Reforzar la reserva de liquidez antes de nuevas compras', category: 'Liquidez', urgency: 'Alta', explanation: 'La liquidez disponible tras descontar garantias queda por debajo del objetivo dinamico.', justification: `${eur.format(liquidityAvailable)} disponibles frente a un objetivo de ${eur.format(requiredLiquidity)}.`, impact: 'Reduce el riesgo de tension de caja durante la compra de vivienda y ante asignaciones de puts.', risk: 'Tener que frenar inversiones de forma forzada o asumir deuda menos favorable.', horizon: '1-3 meses', reviewDate: new Date(Date.now() + 30 * 86400000).toISOString() });
+  if (state.advisor.upcomingDebt > 0 && state.advisor.upcomingDebtMonths <= 12) generated.push({ id: 'mortgage-priority', title: 'Priorizar liquidez y capacidad de ahorro antes de formalizar la hipoteca', category: 'Deuda futura', urgency: state.advisor.upcomingDebtMonths <= 6 ? 'Alta' : 'Media', explanation: 'La nueva deuda futura cambia el nivel prudente de caja y la tolerancia al riesgo.', justification: `Hipoteca o deuda prevista de ${eur.format(state.advisor.upcomingDebt)} en ${state.advisor.upcomingDebtMonths} meses.`, impact: 'Mejora la flexibilidad para absorber gastos de formalizacion y reduce riesgo de vender activos.', risk: 'Asumir la deuda sin colchon suficiente y deteriorar la disciplina de inversion.', horizon: 'Hasta formalizacion', reviewDate: new Date(Date.now() + 45 * 86400000).toISOString() });
+  if (signals.find(item => item.id === 'company')?.tone === 'risk') generated.push({ id: 'top-position-freeze', title: 'Evitar ampliar las mayores posiciones hasta rebajar la concentracion', category: 'Concentracion', urgency: 'Alta', explanation: 'La posicion principal ya pesa demasiado dentro de la cartera.', justification: topPositions[0] ? `${topPositions[0].name} pesa ${formatPercent(topPositions[0].allocation || 0)}.` : 'Sin posicion principal disponible.', impact: 'Reduce el riesgo de que una sola empresa condicione el resultado del patrimonio.', risk: 'Mayor volatilidad y dependencia de pocos generadores de renta.', horizon: '3 meses', reviewDate: new Date(Date.now() + 90 * 86400000).toISOString() });
+  if (signals.find(item => item.id === 'country')?.tone !== 'good') generated.push({ id: 'international-balance', title: 'Dirigir nuevas aportaciones a paises o sectores infraponderados', category: 'Asignacion', urgency: 'Media', explanation: 'La cartera puede diversificarse mejor sin necesidad de vender posiciones existentes.', justification: `La mayor exposicion geografica sigue concentrada en ${signals.find(item => item.id === 'country')?.name || 'una zona dominante'}.`, impact: 'Mejora el equilibrio entre renta, divisa y riesgo regulatorio.', risk: 'Seguir acumulando sesgo local y dependencia de un mismo ciclo economico.', horizon: '3-6 meses', reviewDate: new Date(Date.now() + 120 * 86400000).toISOString() });
+  if (options.totalCollateral > 0) generated.push({ id: 'options-cash-check', title: 'Revisar si todas las puts abiertas serian asumibles si se asignaran hoy', category: 'Opciones', urgency: options.expiringSoon.length ? 'Alta' : 'Media', explanation: 'Las opciones abiertas consumen liquidez real y pueden aumentar la concentracion de forma brusca.', justification: `${eur.format(options.totalCollateral)} comprometidos y ${options.expiringSoon.length} vencimientos proximos.`, impact: 'Evita asignaciones incomodas o ventas forzadas de otros activos.', risk: 'Quedarte sin caja o sobreponderar empresas ya relevantes.', horizon: 'Inmediato', reviewDate: new Date(Date.now() + 21 * 86400000).toISOString() });
+  if (dividendTrend.growth12m !== null && dividendTrend.growth12m <= 0) generated.push({ id: 'dividend-review', title: 'Revisar si el crecimiento del dividendo se ha estancado frente al ultimo ano', category: 'Dividendos', urgency: 'Media', explanation: 'La renta recurrente no esta mejorando al ritmo esperado.', justification: `Crecimiento interanual estimado: ${formatPercent(dividendTrend.growth12m)}.`, impact: 'Ayuda a proteger el objetivo de independencia financiera y la calidad de la renta.', risk: 'Confiar en un progreso nominal que en realidad se esta frenando.', horizon: '1-2 meses', reviewDate: new Date(Date.now() + 60 * 86400000).toISOString() });
+  if (debtRatio > 0.5) generated.push({ id: 'leverage-discipline', title: 'Reducir el ritmo de riesgo hasta estabilizar la deuda total', category: 'Riesgo financiero', urgency: 'Alta', explanation: 'La deuda total prevista pesa demasiado sobre el patrimonio consolidado.', justification: `Ratio estimado de deuda ampliada: ${num.format(debtRatio * 100)} %.`, impact: 'Disminuye la vulnerabilidad del patrimonio a tipos, imprevistos y caidas de mercado.', risk: 'Entrar en una fase de escasa maniobrabilidad financiera.', horizon: '6-12 meses', reviewDate: new Date(Date.now() + 120 * 86400000).toISOString() });
+  const existingById = new Map((state.recommendations || []).map(item => [item.id, item]));
+  return generated.slice(0, 6).map(item => {
+    const existing = existingById.get(item.id);
+    return { ...item, status: existing?.status || 'pending', reason: existing?.reason || '', createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: existing?.decidedAt || null };
+  });
+}
+function executiveDiagnosis(recommendations) {
+  const metrics = fullMetrics();
+  const { liquidityAvailable, requiredLiquidity, options } = advisorSignals();
+  const lines = [];
+  if (liquidityAvailable < requiredLiquidity) lines.push(`La liquidez util (${eur.format(liquidityAvailable)}) sigue por debajo del umbral prudente (${eur.format(requiredLiquidity)}).`);
+  else lines.push(`La liquidez util cubre el nivel prudente de caja (${eur.format(requiredLiquidity)}), lo que permite absorber imprevistos sin tension inmediata.`);
+  if (state.advisor.upcomingDebt > 0) lines.push(`La futura deuda prevista por ${eur.format(state.advisor.upcomingDebt)} obliga a priorizar caja y disciplina de aportaciones en los proximos ${state.advisor.upcomingDebtMonths} meses.`);
+  if (options.totalCollateral > 0) lines.push(`Las opciones abiertas comprometen ${eur.format(options.totalCollateral)} de liquidez y deben tratarse como capital no disponible para nuevas compras.`);
+  if (recommendations.some(item => item.id === 'top-position-freeze')) lines.push('La cartera mantiene una concentracion relevante en algunas posiciones, por lo que conviene evitar ampliar las mas pesadas.');
+  lines.push(`El patrimonio neto estimado es de ${eur.format(metrics.netWorth)} y los dividendos anuales de ${eur.format(metrics.dividends)}; la prioridad no es maximizar yield, sino preservar flexibilidad y calidad de decisiones.`);
+  return lines;
+}
+function renderAdvisorCenter() {
+  ensureAdvisoryState();
+  const recommendationRows = $('#recommendationRows');
+  const decisionRows = $('#decisionRows');
+  const diagnosis = $('#advisorDiagnosis');
+  const priorities = $('#advisorPriorities');
+  const signalsNode = $('#advisorSignals');
+  const optionsSummaryNode = $('#advisorOptionsSummary');
+  const optionsAlertsNode = $('#advisorOptionsAlerts');
+  if (!diagnosis) return;
+  $('#advisorMinLiquidity').value = state.advisor.minimumLiquidityTarget ?? '';
+  $('#advisorUpcomingDebt').value = state.advisor.upcomingDebt ?? '';
+  $('#advisorUpcomingDebtMonths').value = state.advisor.upcomingDebtMonths ?? '';
+  $('#advisorSavingsCapacity').value = state.advisor.savingsCapacity ?? '';
+  $('#advisorEmergencyFund').value = state.advisor.emergencyFundTarget ?? '';
+  state.recommendations = buildRecommendations();
+  const { signals } = advisorSignals();
+  const options = optionsSummary();
+  diagnosis.className = 'summary-stack';
+  diagnosis.innerHTML = executiveDiagnosis(state.recommendations).map(line => `<small>${escapeHtml(line)}</small>`).join('');
+  priorities.className = state.recommendations.length ? 'scenario-list' : 'scenario-list empty-state';
+  priorities.innerHTML = state.recommendations.slice(0, 3).map(item => `<article class="priority-card"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.urgency)}</span><small>${escapeHtml(item.explanation)}</small><small>Revision: ${dateEs(String(item.reviewDate).slice(0, 10))}</small></article>`).join('') || 'Sin datos';
+  signalsNode.className = 'signal-list';
+  signalsNode.innerHTML = signals.map(signal => `<div class="signal-row signal-${signal.tone}"><strong>${escapeHtml(signal.title)}</strong><span>${escapeHtml(signal.name)}</span><small>${escapeHtml(signal.detail)}</small></div>`).join('');
+  optionsSummaryNode.className = 'summary-stack';
+  optionsSummaryNode.innerHTML = options.open.length ? [`<strong>${options.open.length} posiciones abiertas</strong>`, `<small>Garantias reservadas: ${eur.format(options.totalCollateral)}</small>`, `<small>Primas netas acumuladas: ${eur.format(options.totalPremium)}</small>`, `<small>Exposicion potencial por asignacion: ${eur.format(options.assignedPotential)}</small>`].join('') : '<small>No hay opciones abiertas registradas.</small>';
+  optionsAlertsNode.className = 'signal-list';
+  const optionAlertCards = [];
+  if (options.expiringSoon.length) optionAlertCards.push({ tone: 'warn', title: 'Vencimientos proximos', detail: `${options.expiringSoon.length} posiciones vencen en los proximos 45 dias.` });
+  if (options.totalCollateral > fullMetrics().liquidity * 0.4 && fullMetrics().liquidity > 0) optionAlertCards.push({ tone: 'risk', title: 'Liquidez comprometida', detail: 'Las garantias absorben una parte demasiado alta de la caja disponible.' });
+  if (!optionAlertCards.length) optionAlertCards.push({ tone: 'good', title: 'Opciones bajo control', detail: 'No hay alertas criticas en las posiciones registradas.' });
+  optionsAlertsNode.innerHTML = optionAlertCards.map(item => `<div class="signal-row signal-${item.tone}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div>`).join('');
+  recommendationRows.innerHTML = state.recommendations.length ? state.recommendations.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.category)}</small></td><td>${escapeHtml(item.urgency)}</td><td>${escapeHtml(item.impact)}</td><td>${escapeHtml(item.risk)}</td><td>${dateEs(String(item.reviewDate).slice(0, 10))}</td><td>${escapeHtml(item.status)}</td><td><div class="recommendation-actions"><wa-button size="small" appearance="plain" data-rec-action="accept" data-rec-id="${item.id}">Aceptar</wa-button><wa-button size="small" appearance="plain" data-rec-action="execute" data-rec-id="${item.id}">Ejecutada</wa-button><wa-button size="small" appearance="plain" data-rec-action="postpone" data-rec-id="${item.id}">Posponer</wa-button><wa-button size="small" appearance="plain" data-rec-action="discard" data-rec-id="${item.id}">Descartar</wa-button></div></td></tr>`).join('') : '<tr><td colspan="7" class="empty-cell">Sin recomendaciones todavia.</td></tr>';
+  const reviews = (state.decisionReviews || []).slice().sort((a, b) => new Date(b.decidedAt || b.createdAt) - new Date(a.decidedAt || a.createdAt));
+  decisionRows.innerHTML = reviews.length ? reviews.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.actionLabel)}</small></td><td>${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.decidedAt || item.createdAt))}</td><td>${dateEs(String(item.reviewDate || '').slice(0, 10))}</td><td>${escapeHtml(item.status)}</td><td>${escapeHtml(item.reason || 'Sin nota registrada')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Aun no hay decisiones registradas.</td></tr>';
+}
+function renderOptionsModule() {
+  const summaryNode = $('#optionSummary');
+  const rowsNode = $('#optionRows');
+  if (!summaryNode || !rowsNode) return;
+  const summary = optionsSummary();
+  summaryNode.className = 'summary-stack';
+  summaryNode.innerHTML = summary.open.length ? [`<strong>${summary.open.length} posiciones abiertas</strong>`, `<small>Garantias reservadas: ${eur.format(summary.totalCollateral)}</small>`, `<small>Primas abiertas: ${eur.format(summary.openPremium)}</small>`, `<small>Primas historicas netas: ${eur.format(summary.totalPremium)}</small>`, `<small>Vencimientos proximos: ${summary.expiringSoon.length}</small>`].join('') : '<small>Sin operaciones registradas.</small>';
+  rowsNode.innerHTML = state.options.length ? state.options.map(option => {
+    const derived = optionDerived(option);
+    return `<tr><td class="company-cell"><strong>${escapeHtml(option.underlying || option.ticker || 'Sin subyacente')}</strong><small>${escapeHtml(option.ticker || '-')} | ${escapeHtml(option.isin || 'Sin ISIN')}</small></td><td>${option.optionType === 'put' ? 'Put' : 'Call'}<br><small>${escapeHtml(option.strategy)}</small></td><td>${escapeHtml(option.objective === 'income' ? 'Prima' : 'Comprar acciones')}</td><td>${dateEs(option.expiration)}</td><td>${eur.format(derived.netPremium)}</td><td>${eur.format(derived.capitalCommitted)}</td><td>${escapeHtml(option.status)}</td><td><wa-button size="small" appearance="plain" data-delete-option="${option.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`;
+  }).join('') : '<tr><td colspan="8" class="empty-cell">No hay posiciones en opciones.</td></tr>';
+}
+function addOptionPosition(event) {
+  event.preventDefault();
+  const underlying = $('#optionUnderlying').value.trim();
+  const strike = parseLocaleNumber($('#optionStrike').value);
+  const premiumPerShare = parseLocaleNumber($('#optionPremiumPerShare').value);
+  if (!underlying || strike === null || premiumPerShare === null) { showNotice('Completa al menos subyacente, strike y prima por accion.'); return; }
+  state.options.unshift(migrateOptionPosition({
+    ...defaultOptionPosition(),
+    underlying,
+    ticker: $('#optionTicker').value.trim(),
+    isin: $('#optionIsin').value.trim(),
+    optionType: $('#optionType').value || 'put',
+    strategy: $('#optionStrategy').value || 'cash-secured-put',
+    objective: $('#optionObjective').value || 'acquire',
+    openedAt: $('#optionOpenedAt').value || new Date().toISOString().slice(0, 10),
+    expiration: $('#optionExpiration').value || '',
+    strike,
+    contracts: Number($('#optionContracts').value || 1),
+    multiplier: Number($('#optionMultiplier').value || 100),
+    premiumPerShare,
+    fees: parseLocaleNumber($('#optionFees').value) || 0,
+    collateral: parseLocaleNumber($('#optionCollateral').value),
+    status: $('#optionStatus').value || 'open',
+    thesis: $('#optionThesis').value.trim(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }));
+  saveState();
+  renderOptionsModule();
+  renderAdvisorCenter();
+  $('#optionForm').reset();
+  $('#optionType').value = 'put';
+  $('#optionStrategy').value = 'cash-secured-put';
+  $('#optionObjective').value = 'acquire';
+  $('#optionStatus').value = 'open';
+  showNotice('Operacion de opciones registrada.');
+}
+function updateAdvisorSettings() {
+  ensureAdvisoryState();
+  state.advisor.minimumLiquidityTarget = parseLocaleNumber($('#advisorMinLiquidity').value) || 0;
+  state.advisor.upcomingDebt = parseLocaleNumber($('#advisorUpcomingDebt').value) || 0;
+  state.advisor.upcomingDebtMonths = Math.max(0, Number($('#advisorUpcomingDebtMonths').value || 0));
+  state.advisor.savingsCapacity = parseLocaleNumber($('#advisorSavingsCapacity').value) || 0;
+  state.advisor.emergencyFundTarget = parseLocaleNumber($('#advisorEmergencyFund').value) || 0;
+  saveState();
+  renderAdvisorCenter();
+}
+function recommendationActionLabel(action) {
+  return action === 'accept' ? 'Aceptada' : action === 'execute' ? 'Ejecutada' : action === 'postpone' ? 'Pospuesta' : 'Descartada';
+}
+function handleRecommendationAction(action, recommendationId) {
+  const index = state.recommendations.findIndex(item => item.id === recommendationId);
+  if (index < 0) return;
+  const recommendation = state.recommendations[index];
+  const promptReason = window.prompt(`Motivo para marcar la recomendacion como ${recommendationActionLabel(action).toLowerCase()}:`, recommendation.reason || '');
+  const reason = promptReason ?? recommendation.reason ?? '';
+  state.recommendations[index] = { ...recommendation, status: action === 'accept' ? 'accepted' : action === 'execute' ? 'executed' : action === 'postpone' ? 'postponed' : 'discarded', reason, decidedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  state.decisionReviews.unshift({ id: `decision-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, recommendationId, title: recommendation.title, actionLabel: recommendationActionLabel(action), status: state.recommendations[index].status, reason, createdAt: recommendation.createdAt, decidedAt: state.recommendations[index].decidedAt, reviewDate: new Date(Date.now() + (action === 'execute' ? 90 : 30) * 86400000).toISOString() });
+  saveState();
+  renderAdvisorCenter();
+  showNotice(`Recomendacion ${recommendationActionLabel(action).toLowerCase()}.`);
+}
+function renderDashboard() {
+  const portfolio = activePortfolio();
+  const metrics = fullMetrics(portfolio);
+  const snapshots = [...state.history].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const lastSnapshot = snapshots[0] || null;
+  const previousSnapshot = snapshots[1] || null;
+  const score = portfolioScore(portfolio);
+  const signals = concentrationSignals(portfolio);
+  const scenarios = independenceScenarios(metrics);
+  $('#kpiValue').textContent = eur.format(metrics.value);
+  $('#kpiPositions').textContent = `${metrics.count} posiciones`;
+  $('#kpiCost').textContent = eur.format(metrics.cost);
+  $('#kpiGain').textContent = `Plusvalia: ${eur.format(metrics.gain)}`;
+  $('#kpiDividends').textContent = eur.format(metrics.dividends);
+  $('#kpiYield').textContent = `Yield: ${pct.format(metrics.yield)}`;
+  $('#kpiYoc').textContent = pct.format(metrics.yoc);
+  $('#kpiMonthly').textContent = `Media mensual: ${eur.format(metrics.dividends / 12)}`;
+  $('#lastUpdated').textContent = state.lastImport ? `Ultima importacion: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'long', timeStyle: 'short' }).format(new Date(state.lastImport))}` : 'Importa el CSV de DivvyDiary para comenzar.';
+  $('#netWorthValue').textContent = eur.format(metrics.netWorth);
+  $('#netWorthMeta').textContent = metrics.netWorthGoalProgress === null ? 'Configura un objetivo de patrimonio neto.' : `Progreso: ${pct.format(Math.min(metrics.netWorthGoalProgress, 9.99))}`;
+  $('#liquidityValue').textContent = eur.format(metrics.liquidity);
+  $('#liquidityMeta').textContent = `Otros activos: ${eur.format(metrics.otherAssets)}`;
+  $('#debtValue').textContent = eur.format(metrics.liabilities);
+  $('#debtMeta').textContent = lastSnapshot ? `Ultimo cierre: ${eur.format(lastSnapshot.debt || 0)}` : 'Sin cierre mensual todavia.';
+  $('#goalValue').textContent = metrics.dividendGoalProgress === null ? '--' : pct.format(Math.min(metrics.dividendGoalProgress, 9.99));
+  $('#goalMeta').textContent = state.settings.targetAnnualDividends ? `Objetivo: ${eur.format(state.settings.targetAnnualDividends)}` : 'Configura un objetivo anual de dividendos.';
+  $('#snapshotDelta').textContent = lastSnapshot && previousSnapshot ? `Variacion vs. cierre anterior: ${formatPercent(relativeDelta(lastSnapshot.netWorth || 0, previousSnapshot.netWorth || 0))}` : 'Necesitas al menos dos cierres para ver variaciones.';
+  $('#latestSnapshot').textContent = lastSnapshot ? `Ultimo cierre: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(lastSnapshot.date))} | Patrimonio neto ${eur.format(lastSnapshot.netWorth || 0)}` : 'Todavia no hay cierres mensuales.';
+  $('#portfolioScore').textContent = String(score.value);
+  $('#portfolioScoreLabel').textContent = `${score.label} | ${score.value}/100`;
+  $('#portfolioScoreMeta').textContent = score.label === 'Sin datos' ? score.detail : `${score.detail} Concentracion ${score.concentrationLabel.toLowerCase()}.`;
+  $('#concentrationRows').className = signals.length ? 'signal-list' : 'signal-list empty-state';
+  $('#concentrationRows').innerHTML = signals.length ? signals.map(signal => `<div class="signal-row signal-${signal.tone}"><strong>${signal.title}</strong><span>${escapeHtml(signal.name)}</span><small>${formatPercent(signal.weight)} | ${signal.label}</small></div>`).join('') : 'Sin datos';
+  $('#fiGoalStatus').textContent = scenarios ? `Objetivo anual: ${eur.format(scenarios[0].target)} | progreso actual ${pct.format(Math.min(scenarios[0].progress, 9.99))}` : 'Configura tu gasto mensual para ver escenarios.';
+  $('#fiGoalMeta').textContent = scenarios ? `Aportacion mensual considerada: ${state.settings.monthlyContribution === null ? eur.format(0) : eur.format(state.settings.monthlyContribution)}` : 'Se calcula con dividendos actuales, aportacion mensual y tres supuestos de crecimiento.';
+  const fiRows = $('#fiRows');
+  if (!scenarios) { fiRows.className = 'scenario-list empty-state'; fiRows.textContent = 'Sin datos'; }
+  else { fiRows.className = 'scenario-list'; fiRows.innerHTML = scenarios.map(s => `<div class="scenario-card"><strong>${s.label}</strong><span>${s.status}</span><small>${s.years === null ? 'Mas de 40 anos' : `${s.years} anos`}</small><small>Meta estimada: ${s.eta}</small></div>`).join(''); }
+  renderBars('#sectorChart', groupByValue(portfolio, 'sector', metrics.value).slice(0, 8));
+  renderBars('#countryChart', groupByValue(portfolio, 'country', metrics.value).slice(0, 8));
+  const top = sortRows(sortedPortfolio(portfolio).slice(0, 7), 'topPositions');
+  $('#topPositions').innerHTML = top.length ? top.map(position => `<tr><td class="company-cell"><strong>${escapeHtml(position.name)}</strong><small>${escapeHtml(position.symbol)} | ${escapeHtml(position.isin || 'Sin ISIN')}</small></td><td>${eur.format(position.marketValue || 0)}</td><td>${formatPercent(position.allocation ?? (metrics.value ? (position.marketValue || 0) / metrics.value : 0))}</td><td>${eur.format(position.annualDividend || 0)}</td><td>${formatPercent(position.dividendYield)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Todavia no hay posiciones.</td></tr>';
+}
+function render() {
+  applyTheme();
+  renderDashboard();
+  renderAdvisorCenter();
+  renderPortfolio();
+  renderTransactions();
+  renderOptionsModule();
+  renderHistory();
+  renderPlan();
+  renderFilters();
+  renderAssets();
+  renderLiabilities();
+  renderSettings();
+  renderUndoState();
+  renderBackupStatus();
+  renderReportHistory();
+  renderSortableHeaders();
+}
+ensureAdvisoryState();
+$('#optionForm')?.addEventListener('submit', addOptionPosition);
+['#advisorMinLiquidity', '#advisorUpcomingDebt', '#advisorUpcomingDebtMonths', '#advisorSavingsCapacity', '#advisorEmergencyFund'].forEach(selector => {
+  $(selector)?.addEventListener('change', updateAdvisorSettings);
+});
+document.addEventListener('click', event => {
+  const recButton = event.target.closest('[data-rec-action]');
+  if (recButton) { handleRecommendationAction(recButton.dataset.recAction, recButton.dataset.recId); return; }
+  const optionDelete = event.target.closest('[data-delete-option]');
+  if (optionDelete) {
+    const optionId = optionDelete.dataset.deleteOption;
+    askConfirm('Eliminar esta operacion de opciones del registro.', () => {
+      state.options = state.options.filter(item => item.id !== optionId);
+      saveState();
+      render();
+      showNotice('Operacion de opciones eliminada.');
+    });
+  }
+});
+saveState();
+render();
+
+const ADVISORY_STATUS_LABELS = { pending: 'Pendiente', accepted: 'Aceptada', executed: 'Ejecutada', discarded: 'Descartada', postponed: 'Pospuesta', reviewing: 'En revision', closed: 'Cerrada' };
+const ADVISORY_KIND_LABELS = { fact: 'Hecho objetivo', alert: 'Alerta automatica', estimate: 'Estimacion', recommendation: 'Recomendacion', opinion: 'Revision humana' };
+const REVIEW_PHASE_LABELS = { '3m': 'Revision 3 meses', '6m': 'Revision 6 meses', '12m': 'Revision 12 meses' };
+DEFAULT_TABLE_SORTS.options = { key: 'expiration', dir: 'asc' };
+DEFAULT_TABLE_SORTS.recommendations = { key: 'urgencyRank', dir: 'asc' };
+DEFAULT_TABLE_SORTS.decisionReviews = { key: 'reviewDate', dir: 'asc' };
+SORTABLE_TABLES.options = { selector: '#optionRows', columns: [{ key: 'underlying', label: 'Subyacente', type: 'string' }, { key: 'optionType', label: 'Tipo', type: 'string' }, { key: 'objective', label: 'Objetivo', type: 'string' }, { key: 'expiration', label: 'Vencimiento', type: 'date' }, { key: 'netPremium', label: 'Prima neta', type: 'number' }, { key: 'capitalCommitted', label: 'Capital comprometido', type: 'number' }, { key: 'status', label: 'Estado', type: 'string' }, { key: null, label: '' }] };
+SORTABLE_TABLES.recommendations = { selector: '#recommendationRows', columns: [{ key: 'title', label: 'Titulo', type: 'string' }, { key: 'urgencyRank', label: 'Urgencia', type: 'number' }, { key: 'impactRank', label: 'Impacto', type: 'number' }, { key: 'riskRank', label: 'Riesgo de no actuar', type: 'number' }, { key: 'reviewDate', label: 'Revision', type: 'date' }, { key: 'statusLabel', label: 'Estado', type: 'string' }, { key: null, label: '' }] };
+SORTABLE_TABLES.decisionReviews = { selector: '#decisionRows', columns: [{ key: 'title', label: 'Decision', type: 'string' }, { key: 'decidedAt', label: 'Fecha', type: 'date' }, { key: 'reviewDate', label: 'Revision', type: 'date' }, { key: 'statusLabel', label: 'Estado', type: 'string' }, { key: 'lesson', label: 'Aprendizaje', type: 'string' }] };
+function urgencyRank(value) { return ({ Alta: 1, Media: 2, Baja: 3 }[cleanText(value)] || 9); }
+function impactRank(value) { return ({ Alto: 1, Media: 2, Medio: 2, Bajo: 3 }[cleanText(value)] || 9); }
+function riskRank(value) { return ({ Alto: 1, Media: 2, Medio: 2, Bajo: 3 }[cleanText(value)] || 9); }
+function advisoryKindLabel(value) { return ADVISORY_KIND_LABELS[cleanText(value).toLowerCase()] || 'Recomendacion'; }
+function recommendationStatusLabel(value) { return ADVISORY_STATUS_LABELS[cleanText(value).toLowerCase()] || 'Pendiente'; }
+function reviewPhaseLabel(value) { return REVIEW_PHASE_LABELS[cleanText(value).toLowerCase()] || 'Revision'; }
+function defaultAdvisorState(settings = DEFAULT_SETTINGS) { const monthlyExpense = toNum(settings?.monthlyExpense, null); const monthlyContribution = toNum(settings?.monthlyContribution, null); return { minimumLiquidityTarget: monthlyExpense ? monthlyExpense * 6 : 15000, upcomingDebt: 0, upcomingDebtMonths: 12, savingsCapacity: monthlyContribution ?? 1000, emergencyFundTarget: monthlyExpense ? monthlyExpense * 6 : 12000 }; }
+function defaultDecisionReview() { return { id: `decision-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, recommendationId: '', title: '', category: '', phase: '3m', phaseLabel: 'Revision 3 meses', actionLabel: '', status: 'pending', statusLabel: 'Pendiente', reason: '', expectedOutcome: '', actualOutcome: '', lesson: '', createdAt: new Date().toISOString(), decidedAt: '', reviewDate: '', reviewedAt: '' }; }
+function migrateRecommendation(entry) { if (!entry || typeof entry !== 'object') return null; const urgency = cleanText(entry.urgency) || 'Media'; const impact = cleanText(entry.impact) || 'Medio'; const risk = cleanText(entry.risk) || 'Medio'; const status = cleanText(entry.status).toLowerCase() || 'pending'; return { ...entry, id: cleanText(entry.id) || `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, title: cleanText(entry.title) || 'Recomendacion', category: cleanText(entry.category) || 'General', kind: cleanText(entry.kind).toLowerCase() || 'recommendation', action: cleanText(entry.action), explanation: cleanText(entry.explanation), justification: cleanText(entry.justification), impact, risk, urgency, reviewDate: normalizeDate(entry.reviewDate) || new Date().toISOString().slice(0, 10), status, statusLabel: recommendationStatusLabel(status), urgencyRank: urgencyRank(urgency), impactRank: impactRank(impact), riskRank: riskRank(risk), createdAt: entry.createdAt || new Date().toISOString(), updatedAt: entry.updatedAt || new Date().toISOString(), decidedAt: entry.decidedAt || null, reason: cleanText(entry.reason) }; }
+function migrateDecisionReview(entry) { if (!entry || typeof entry !== 'object') return null; const phase = cleanText(entry.phase).toLowerCase() || '3m'; const status = cleanText(entry.status).toLowerCase() || 'pending'; return { ...defaultDecisionReview(), ...entry, id: cleanText(entry.id) || `decision-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, recommendationId: cleanText(entry.recommendationId), title: cleanText(entry.title) || 'Decision', category: cleanText(entry.category), phase, phaseLabel: reviewPhaseLabel(phase), actionLabel: cleanText(entry.actionLabel) || 'Decision registrada', status, statusLabel: cleanText(entry.statusLabel) || recommendationStatusLabel(status), reason: cleanText(entry.reason), expectedOutcome: cleanText(entry.expectedOutcome), actualOutcome: cleanText(entry.actualOutcome), lesson: cleanText(entry.lesson), createdAt: entry.createdAt || new Date().toISOString(), decidedAt: entry.decidedAt || '', reviewDate: normalizeDate(entry.reviewDate) || '', reviewedAt: entry.reviewedAt || '' }; }
+function migrateBackup(backup) { if (!backup || typeof backup !== 'object' || !backup.snapshot) return null; return { id: backup.id || `backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, createdAt: backup.createdAt || new Date().toISOString(), reason: backup.reason || 'import', source: backup.source || null, snapshot: { portfolio: Array.isArray(backup.snapshot.portfolio) ? backup.snapshot.portfolio.map(migratePosition).filter(Boolean) : [], transactions: Array.isArray(backup.snapshot.transactions) ? backup.snapshot.transactions.map(migrateTransaction).filter(Boolean) : [], options: Array.isArray(backup.snapshot.options) ? backup.snapshot.options.map(migrateOptionPosition).filter(Boolean) : [], recommendations: Array.isArray(backup.snapshot.recommendations) ? backup.snapshot.recommendations.map(migrateRecommendation).filter(Boolean) : [], decisionReviews: Array.isArray(backup.snapshot.decisionReviews) ? backup.snapshot.decisionReviews.map(migrateDecisionReview).filter(Boolean) : [], advisor: backup.snapshot.advisor && typeof backup.snapshot.advisor === 'object' ? { ...backup.snapshot.advisor } : null, history: Array.isArray(backup.snapshot.history) ? backup.snapshot.history.map(migrateSnapshot).filter(Boolean) : [], assets: Array.isArray(backup.snapshot.assets) ? backup.snapshot.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(backup.snapshot.liabilities) ? backup.snapshot.liabilities.map(migrateLiability).filter(Boolean) : [], reportHistory: Array.isArray(backup.snapshot.reportHistory) ? backup.snapshot.reportHistory.map(migrateReportEntry).filter(Boolean) : [], settings: migrateSettings(backup.snapshot.settings), lastImport: backup.snapshot.lastImport || null, lastTransactionsImport: backup.snapshot.lastTransactionsImport || null, lastBackupAt: backup.snapshot.lastBackupAt || null } }; }
+function ensureAdvisoryState() { const defaults = defaultAdvisorState(state.settings); state.advisor = { ...defaults, ...(state.advisor && typeof state.advisor === 'object' ? state.advisor : {}) }; state.advisor.minimumLiquidityTarget = toNum(state.advisor.minimumLiquidityTarget, defaults.minimumLiquidityTarget) || 0; state.advisor.upcomingDebt = toNum(state.advisor.upcomingDebt, 0) || 0; state.advisor.upcomingDebtMonths = Math.max(0, Math.round(toNum(state.advisor.upcomingDebtMonths, 12) || 12)); state.advisor.savingsCapacity = toNum(state.advisor.savingsCapacity, state.settings?.monthlyContribution ?? defaults.savingsCapacity) || 0; state.advisor.emergencyFundTarget = toNum(state.advisor.emergencyFundTarget, defaults.emergencyFundTarget) || 0; state.options = Array.isArray(state.options) ? state.options.map(migrateOptionPosition).filter(Boolean) : []; state.recommendations = Array.isArray(state.recommendations) ? state.recommendations.map(migrateRecommendation).filter(Boolean) : []; state.decisionReviews = Array.isArray(state.decisionReviews) ? state.decisionReviews.map(migrateDecisionReview).filter(Boolean) : []; }
+function defaultState() { return { schemaVersion: SCHEMA_VERSION, portfolio: [], transactions: [], options: [], recommendations: [], decisionReviews: [], advisor: { ...defaultAdvisorState(DEFAULT_SETTINGS) }, history: [], backups: [], assets: [], liabilities: [], reportHistory: [], settings: { ...DEFAULT_SETTINGS }, tableSorts: defaultTableSorts(), lastImport: null, lastTransactionsImport: null, lastBackupAt: null, lastImportUndo: null, theme: 'light' }; }
+function migrateState(raw) { const base = defaultState(); if (!raw || typeof raw !== 'object') return base; const settings = migrateSettings(raw.settings); return { ...base, ...raw, schemaVersion: SCHEMA_VERSION, portfolio: Array.isArray(raw.portfolio) ? raw.portfolio.map(migratePosition).filter(Boolean) : [], transactions: Array.isArray(raw.transactions) ? raw.transactions.map(migrateTransaction).filter(Boolean) : [], options: Array.isArray(raw.options) ? raw.options.map(migrateOptionPosition).filter(Boolean) : [], recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.map(migrateRecommendation).filter(Boolean) : [], decisionReviews: Array.isArray(raw.decisionReviews) ? raw.decisionReviews.map(migrateDecisionReview).filter(Boolean) : [], advisor: { ...defaultAdvisorState(settings), ...(raw.advisor && typeof raw.advisor === 'object' ? raw.advisor : {}) }, history: Array.isArray(raw.history) ? raw.history.map(migrateSnapshot).filter(Boolean) : [], backups: Array.isArray(raw.backups) ? raw.backups.map(migrateBackup).filter(Boolean).slice(0, 10) : [], assets: Array.isArray(raw.assets) ? raw.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(raw.liabilities) ? raw.liabilities.map(migrateLiability).filter(Boolean) : [], reportHistory: Array.isArray(raw.reportHistory) ? raw.reportHistory.map(migrateReportEntry).filter(Boolean).slice(0, 24) : [], settings, tableSorts: migrateTableSorts(raw.tableSorts), lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null, lastTransactionsImport: raw.lastTransactionsImport || null, theme: raw.theme === 'dark' ? 'dark' : 'light' }; }
+function cloneSnapshot() { return JSON.parse(JSON.stringify({ portfolio: state.portfolio, transactions: state.transactions, options: state.options, recommendations: state.recommendations, decisionReviews: state.decisionReviews, advisor: state.advisor, history: state.history, assets: state.assets, liabilities: state.liabilities, reportHistory: state.reportHistory, settings: state.settings, lastImport: state.lastImport, lastTransactionsImport: state.lastTransactionsImport, lastBackupAt: state.lastBackupAt })); }
+function decisionReviewsRows() { return sortRows((state.decisionReviews || []).map(migrateDecisionReview).filter(Boolean), 'decisionReviews'); }
+function dueReviewCount() { const today = new Date().toISOString().slice(0, 10); return decisionReviewsRows().filter(item => item.reviewDate && item.reviewDate <= today && ['pending', 'reviewing'].includes(item.status)).length; }
+function buildRecommendations() { const { signals, liquidityAvailable, requiredLiquidity, debtRatio, options, dividendTrend } = advisorSignals(); const topPositions = sortedPortfolio().slice(0, 5); const generated = []; if (liquidityAvailable < requiredLiquidity) generated.push({ id: 'liq-buffer', kind: 'alert', title: 'Reforzar la reserva de liquidez antes de nuevas compras', category: 'Liquidez', action: 'Reducir temporalmente la inversion y reservar caja hasta recuperar el umbral prudente.', urgency: 'Alta', explanation: 'La liquidez disponible tras descontar garantias queda por debajo del objetivo dinamico.', justification: `${eur.format(liquidityAvailable)} disponibles frente a un objetivo de ${eur.format(requiredLiquidity)}.`, impact: 'Alto', risk: 'Alto', horizon: '1-3 meses', reviewDate: new Date(Date.now() + 30 * 86400000).toISOString() }); if (state.advisor.upcomingDebt > 0 && state.advisor.upcomingDebtMonths <= 12) generated.push({ id: 'mortgage-priority', kind: 'estimate', title: 'Priorizar liquidez y capacidad de ahorro antes de formalizar la hipoteca', category: 'Deuda futura', action: 'Fijar un objetivo de caja previo a la firma y revisar aportaciones mensuales hasta alcanzarlo.', urgency: state.advisor.upcomingDebtMonths <= 6 ? 'Alta' : 'Media', explanation: 'La nueva deuda futura cambia el nivel prudente de caja y la tolerancia al riesgo.', justification: `Hipoteca o deuda prevista de ${eur.format(state.advisor.upcomingDebt)} en ${state.advisor.upcomingDebtMonths} meses.`, impact: 'Alto', risk: 'Alto', horizon: 'Hasta formalizacion', reviewDate: new Date(Date.now() + 45 * 86400000).toISOString() }); if (signals.find(item => item.id === 'company')?.tone === 'risk') generated.push({ id: 'top-position-freeze', kind: 'alert', title: 'Evitar ampliar las mayores posiciones hasta rebajar la concentracion', category: 'Concentracion', action: 'Congelar compras en las posiciones principales y dirigir nuevas entradas a zonas menos representadas.', urgency: 'Alta', explanation: 'La posicion principal ya pesa demasiado dentro de la cartera.', justification: topPositions[0] ? `${topPositions[0].name} pesa ${formatPercent(topPositions[0].allocation || 0)}.` : 'Sin posicion principal disponible.', impact: 'Alto', risk: 'Alto', horizon: '3 meses', reviewDate: new Date(Date.now() + 90 * 86400000).toISOString() }); if (signals.find(item => item.id === 'country')?.tone !== 'good') generated.push({ id: 'international-balance', kind: 'recommendation', title: 'Dirigir nuevas aportaciones a paises o sectores infraponderados', category: 'Asignacion', action: 'Priorizar las proximas compras fuera del sesgo geografico dominante.', urgency: 'Media', explanation: 'La cartera puede diversificarse mejor sin necesidad de vender posiciones existentes.', justification: `La mayor exposicion geografica sigue concentrada en ${signals.find(item => item.id === 'country')?.name || 'una zona dominante'}.`, impact: 'Medio', risk: 'Medio', horizon: '3-6 meses', reviewDate: new Date(Date.now() + 120 * 86400000).toISOString() }); if (options.totalCollateral > 0) generated.push({ id: 'options-cash-check', kind: 'alert', title: 'Revisar si todas las puts abiertas serian asumibles si se asignaran hoy', category: 'Opciones', action: 'Simular asignacion simultanea y reservar caja real para no depender de ventas forzadas.', urgency: options.expiringSoon.length ? 'Alta' : 'Media', explanation: 'Las opciones abiertas consumen liquidez real y pueden aumentar la concentracion de forma brusca.', justification: `${eur.format(options.totalCollateral)} comprometidos y ${options.expiringSoon.length} vencimientos proximos.`, impact: 'Alto', risk: 'Alto', horizon: 'Inmediato', reviewDate: new Date(Date.now() + 21 * 86400000).toISOString() }); if (dividendTrend.growth12m !== null && dividendTrend.growth12m <= 0) generated.push({ id: 'dividend-review', kind: 'estimate', title: 'Revisar si el crecimiento del dividendo se ha estancado frente al ultimo ano', category: 'Dividendos', action: 'Analizar si el frenazo viene de recortes, divisa, rotacion o exceso de concentracion en pagadores maduros.', urgency: 'Media', explanation: 'La renta recurrente no esta mejorando al ritmo esperado.', justification: `Crecimiento interanual estimado: ${formatPercent(dividendTrend.growth12m)}.`, impact: 'Medio', risk: 'Medio', horizon: '1-2 meses', reviewDate: new Date(Date.now() + 60 * 86400000).toISOString() }); if (debtRatio > 0.5) generated.push({ id: 'leverage-discipline', kind: 'alert', title: 'Reducir el ritmo de riesgo hasta estabilizar la deuda total', category: 'Riesgo financiero', action: 'Aplazar decisiones de riesgo incremental hasta aclarar el mapa de deuda y caja futura.', urgency: 'Alta', explanation: 'La deuda total prevista pesa demasiado sobre el patrimonio consolidado.', justification: `Ratio estimado de deuda ampliada: ${num.format(debtRatio * 100)} %.`, impact: 'Alto', risk: 'Alto', horizon: '6-12 meses', reviewDate: new Date(Date.now() + 120 * 86400000).toISOString() }); if (dueReviewCount() > 0) generated.push({ id: 'review-pending', kind: 'fact', title: 'Revisar decisiones pasadas ya vencidas', category: 'Aprendizaje', action: 'Cerrar las revisiones pendientes para saber que decisiones mejoraron realmente tu situacion.', urgency: 'Media', explanation: 'Hay decisiones con fecha de revision ya alcanzada.', justification: `${dueReviewCount()} revisiones ya deberian haberse evaluado.`, impact: 'Medio', risk: 'Medio', horizon: 'Este mes', reviewDate: new Date().toISOString() }); const existingById = new Map((state.recommendations || []).map(item => [item.id, item])); return generated.slice(0, 6).map(item => { const existing = existingById.get(item.id); return migrateRecommendation({ ...item, status: existing?.status || 'pending', reason: existing?.reason || '', createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: existing?.decidedAt || null }); }); }
+function renderAdvisorCenter() { ensureAdvisoryState(); const recommendationRows = $('#recommendationRows'); const decisionRows = $('#decisionRows'); const diagnosis = $('#advisorDiagnosis'); const priorities = $('#advisorPriorities'); const signalsNode = $('#advisorSignals'); const optionsSummaryNode = $('#advisorOptionsSummary'); const optionsAlertsNode = $('#advisorOptionsAlerts'); if (!diagnosis) return; $('#advisorMinLiquidity').value = state.advisor.minimumLiquidityTarget ?? ''; $('#advisorUpcomingDebt').value = state.advisor.upcomingDebt ?? ''; $('#advisorUpcomingDebtMonths').value = state.advisor.upcomingDebtMonths ?? ''; $('#advisorSavingsCapacity').value = state.advisor.savingsCapacity ?? ''; $('#advisorEmergencyFund').value = state.advisor.emergencyFundTarget ?? ''; state.recommendations = buildRecommendations(); const sortedRecommendations = sortRows(state.recommendations, 'recommendations'); const { signals } = advisorSignals(); const options = optionsSummary(); diagnosis.className = 'summary-stack'; diagnosis.innerHTML = executiveDiagnosis(state.recommendations).map(line => `<small>${escapeHtml(line)}</small>`).join(''); priorities.className = sortedRecommendations.length ? 'scenario-list' : 'scenario-list empty-state'; priorities.innerHTML = sortedRecommendations.slice(0, 3).map(item => `<article class="priority-card"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.urgency)}</span><small>${escapeHtml(item.explanation)}</small><small>Accion: ${escapeHtml(item.action || 'Pendiente de concretar')}</small><small>Revision: ${dateEs(String(item.reviewDate).slice(0, 10))}</small></article>`).join('') || 'Sin datos'; signalsNode.className = 'signal-list'; signalsNode.innerHTML = signals.map(signal => `<div class="signal-row signal-${signal.tone}"><strong>${escapeHtml(signal.title)}</strong><span>${escapeHtml(signal.name)}</span><small>${escapeHtml(signal.detail)}</small></div>`).join(''); optionsSummaryNode.className = 'summary-stack'; optionsSummaryNode.innerHTML = options.open.length ? [`<strong>${options.open.length} posiciones abiertas</strong>`, `<small>Garantias reservadas: ${eur.format(options.totalCollateral)}</small>`, `<small>Primas netas acumuladas: ${eur.format(options.totalPremium)}</small>`, `<small>Exposicion potencial por asignacion: ${eur.format(options.assignedPotential)}</small>`].join('') : '<small>No hay opciones abiertas registradas.</small>'; optionsAlertsNode.className = 'signal-list'; const optionAlertCards = []; if (options.expiringSoon.length) optionAlertCards.push({ tone: 'warn', title: 'Vencimientos proximos', detail: `${options.expiringSoon.length} posiciones vencen en los proximos 45 dias.` }); if (options.totalCollateral > fullMetrics().liquidity * 0.4 && fullMetrics().liquidity > 0) optionAlertCards.push({ tone: 'risk', title: 'Liquidez comprometida', detail: 'Las garantias absorben una parte demasiado alta de la caja disponible.' }); if (!optionAlertCards.length) optionAlertCards.push({ tone: 'good', title: 'Opciones bajo control', detail: 'No hay alertas criticas en las posiciones registradas.' }); optionsAlertsNode.innerHTML = optionAlertCards.map(item => `<div class="signal-row signal-${item.tone}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div>`).join(''); recommendationRows.innerHTML = sortedRecommendations.length ? sortedRecommendations.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.category)} | ${escapeHtml(advisoryKindLabel(item.kind))}</small><br><small>${escapeHtml(item.action || item.explanation)}</small></td><td>${escapeHtml(item.urgency)}</td><td>${escapeHtml(item.impact)}</td><td>${escapeHtml(item.risk)}</td><td>${dateEs(String(item.reviewDate).slice(0, 10))}</td><td>${escapeHtml(item.statusLabel || recommendationStatusLabel(item.status))}</td><td><div class="recommendation-actions"><wa-button size="small" appearance="plain" data-rec-action="accept" data-rec-id="${item.id}">Aceptar</wa-button><wa-button size="small" appearance="plain" data-rec-action="execute" data-rec-id="${item.id}">Ejecutada</wa-button><wa-button size="small" appearance="plain" data-rec-action="postpone" data-rec-id="${item.id}">Posponer</wa-button><wa-button size="small" appearance="plain" data-rec-action="discard" data-rec-id="${item.id}">Descartar</wa-button></div></td></tr>`).join('') : '<tr><td colspan="7" class="empty-cell">Sin recomendaciones todavia.</td></tr>'; const reviews = decisionReviewsRows(); decisionRows.innerHTML = reviews.length ? reviews.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.phaseLabel)} | ${escapeHtml(item.actionLabel)}</small></td><td>${item.decidedAt ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.decidedAt)) : '-'}</td><td>${dateEs(String(item.reviewDate || '').slice(0, 10))}</td><td>${escapeHtml(item.statusLabel)}</td><td>${escapeHtml(item.lesson || item.reason || item.expectedOutcome || 'Sin aprendizaje registrado')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Aun no hay decisiones registradas.</td></tr>'; }
+function renderOptionsModule() { const summaryNode = $('#optionSummary'); const rowsNode = $('#optionRows'); if (!summaryNode || !rowsNode) return; const summary = optionsSummary(); summaryNode.className = 'summary-stack'; summaryNode.innerHTML = summary.open.length ? [`<strong>${summary.open.length} posiciones abiertas</strong>`, `<small>Garantias reservadas: ${eur.format(summary.totalCollateral)}</small>`, `<small>Primas abiertas: ${eur.format(summary.openPremium)}</small>`, `<small>Primas historicas netas: ${eur.format(summary.totalPremium)}</small>`, `<small>Vencimientos proximos: ${summary.expiringSoon.length}</small>`].join('') : '<small>Sin operaciones registradas.</small>'; const rows = sortRows(state.options.map(option => { const derived = optionDerived(option); return { ...option, netPremium: derived.netPremium, capitalCommitted: derived.capitalCommitted }; }), 'options'); rowsNode.innerHTML = rows.length ? rows.map(option => { const derived = optionDerived(option); return `<tr><td class="company-cell"><strong>${escapeHtml(option.underlying || option.ticker || 'Sin subyacente')}</strong><small>${escapeHtml(option.ticker || '-')} | ${escapeHtml(option.isin || 'Sin ISIN')}</small></td><td>${option.optionType === 'put' ? 'Put' : 'Call'}<br><small>${escapeHtml(option.strategy)}</small></td><td>${escapeHtml(option.objective === 'income' ? 'Prima' : 'Comprar acciones')}<br><small>Entrada efectiva ${derived.effectiveEntry === null ? '-' : eur.format(derived.effectiveEntry)}</small></td><td>${dateEs(option.expiration)}</td><td>${eur.format(derived.netPremium)}</td><td>${eur.format(derived.capitalCommitted)}</td><td>${escapeHtml(option.status)}</td><td><wa-button size="small" appearance="plain" data-delete-option="${option.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`; }).join('') : '<tr><td colspan="8" class="empty-cell">No hay posiciones en opciones.</td></tr>'; }
+function reviewCheckpointsForRecommendation(recommendation, actionLabel, status, reason) { const decidedAt = new Date().toISOString(); return [{ phase: '3m', days: 90 }, { phase: '6m', days: 180 }, { phase: '12m', days: 365 }].map(checkpoint => migrateDecisionReview({ recommendationId: recommendation.id, title: recommendation.title, category: recommendation.category, phase: checkpoint.phase, actionLabel, status: ['accepted', 'executed'].includes(status) ? 'pending' : status, reason, expectedOutcome: recommendation.action || recommendation.impact, lesson: '', createdAt: recommendation.createdAt || decidedAt, decidedAt, reviewDate: new Date(Date.now() + checkpoint.days * 86400000).toISOString() })); }
+function handleRecommendationAction(action, recommendationId) { const index = state.recommendations.findIndex(item => item.id === recommendationId); if (index < 0) return; const recommendation = state.recommendations[index]; const promptReason = window.prompt(`Motivo para marcar la recomendacion como ${recommendationActionLabel(action).toLowerCase()}:`, recommendation.reason || ''); const reason = promptReason ?? recommendation.reason ?? ''; const nextStatus = action === 'accept' ? 'accepted' : action === 'execute' ? 'executed' : action === 'postpone' ? 'postponed' : 'discarded'; state.recommendations[index] = migrateRecommendation({ ...recommendation, status: nextStatus, reason, decidedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); state.decisionReviews = [...reviewCheckpointsForRecommendation(recommendation, recommendationActionLabel(action), nextStatus, reason), ...(state.decisionReviews || []).filter(item => item.recommendationId !== recommendationId)].map(migrateDecisionReview); saveState(); renderAdvisorCenter(); renderSortableHeaders(); showNotice(`Recomendacion ${recommendationActionLabel(action).toLowerCase()}.`); }
+function undoLastImportLatest() { if (!state.lastImportUndo?.snapshot) { showNotice('No hay ninguna importacion que deshacer.'); return; } const snapshot = state.lastImportUndo.snapshot; state.portfolio = (snapshot.portfolio || []).map(migratePosition).filter(Boolean); state.transactions = (snapshot.transactions || []).map(migrateTransaction).filter(Boolean); state.options = (snapshot.options || []).map(migrateOptionPosition).filter(Boolean); state.recommendations = (snapshot.recommendations || []).map(migrateRecommendation).filter(Boolean); state.decisionReviews = (snapshot.decisionReviews || []).map(migrateDecisionReview).filter(Boolean); state.advisor = { ...defaultAdvisorState(snapshot.settings || DEFAULT_SETTINGS), ...(snapshot.advisor || {}) }; state.history = (snapshot.history || []).map(migrateSnapshot).filter(Boolean); state.assets = (snapshot.assets || []).map(migrateAsset).filter(Boolean); state.liabilities = (snapshot.liabilities || []).map(migrateLiability).filter(Boolean); state.reportHistory = (snapshot.reportHistory || []).map(migrateReportEntry).filter(Boolean); state.settings = migrateSettings(snapshot.settings); state.lastImport = snapshot.lastImport || null; state.lastTransactionsImport = snapshot.lastTransactionsImport || null; state.lastBackupAt = snapshot.lastBackupAt || null; state.lastImportUndo = null; saveState(); render(); showNotice('Se ha restaurado la copia previa a la ultima importacion.'); }
+function buildPortfolioDataMarkdown() { const portfolio = sortedPortfolio(activePortfolio()); const metrics = fullMetrics(portfolio); const sector = groupByValue(portfolio, 'sector', metrics.value); const country = groupByValue(portfolio, 'country', metrics.value); const score = portfolioScore(portfolio); const signals = concentrationSignals(portfolio); const scenarios = independenceScenarios(metrics); const transactions = transactionRowsData(); const txAnalytics = transactionAnalytics(transactions); const options = optionsSummary(); const recommendations = buildRecommendations(); const reviews = decisionReviewsRows(); return ['# Datos patrimoniales exportados', '', `Fecha del informe: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'long' }).format(new Date())}`, '', '## Resumen patrimonial', `- Valor de cartera: ${eur.format(metrics.value)}`, `- Coste invertido: ${eur.format(metrics.cost)}`, `- Plusvalia: ${eur.format(metrics.gain)}`, `- Dividendos anuales estimados: ${eur.format(metrics.dividends)}`, `- Liquidez registrada: ${eur.format(metrics.liquidity)}`, `- Liquidez util tras garantias: ${eur.format(Math.max(0, metrics.liquidity - options.totalCollateral))}`, `- Otros activos: ${eur.format(metrics.otherAssets)}`, `- Deuda total: ${eur.format(metrics.liabilities)}`, `- Patrimonio neto: ${eur.format(metrics.netWorth)}`, '', '## Salud de la cartera', `- Puntuacion global: ${score.value}/100 (${score.label})`, ...signals.map(signal => `- Concentracion ${signal.title.toLowerCase()}: ${signal.name} con ${pct.format(signal.weight)} (${signal.label})`), '', '## Objetivos financieros', `- Gasto mensual objetivo: ${state.settings.monthlyExpense === null ? 'No configurado' : eur.format(state.settings.monthlyExpense)}`, `- Objetivo anual de dividendos: ${state.settings.targetAnnualDividends === null ? 'No configurado' : eur.format(state.settings.targetAnnualDividends)}`, `- Objetivo de patrimonio neto: ${state.settings.targetNetWorth === null ? 'No configurado' : eur.format(state.settings.targetNetWorth)}`, `- Aportacion mensual prevista: ${state.settings.monthlyContribution === null ? 'No configurada' : eur.format(state.settings.monthlyContribution)}`, '', '## Escenarios de independencia financiera', ...(scenarios ? scenarios.map(s => `- ${s.label}: ${s.years === null ? 'mas de 40 anos' : `${s.years} anos`} | meta estimada ${s.eta}`) : ['- Configura el gasto mensual para obtener escenarios.']), '', '## Cambios frente al cierre anterior', ...reportDeltaSection(), '', '## Actividad de capital y transacciones', `- Operaciones importadas: ${transactions.length}`, `- Compras netas 12m: ${eur.format(txAnalytics.lastTwelveMonths.netAmount)}`, `- Comisiones e impuestos acumulados: ${eur.format(txAnalytics.allTotals.costs)}`, `- Plusvalia realizada estimada: ${eur.format(txAnalytics.realized)}`, `- Ritmo medio de compras 6m: ${eur.format(txAnalytics.monthlyBuys)}`, '', '## Operativa con opciones', `- Posiciones abiertas: ${options.open.length}`, `- Garantias reservadas: ${eur.format(options.totalCollateral)}`, `- Primas netas acumuladas: ${eur.format(options.totalPremium)}`, `- Exposicion potencial por asignacion: ${eur.format(options.assignedPotential)}`, `- Vencimientos proximos: ${options.expiringSoon.length}`, ...options.open.slice(0, 10).map(option => { const derived = optionDerived(option); return `- ${option.underlying || option.ticker}: ${option.optionType} ${dateEs(option.expiration)} | prima ${eur.format(derived.netPremium)} | capital ${eur.format(derived.capitalCommitted)} | entrada efectiva ${derived.effectiveEntry === null ? '-' : eur.format(derived.effectiveEntry)}`; }), '', '## Recomendaciones priorizadas', ...(recommendations.length ? recommendations.map(item => `- [${advisoryKindLabel(item.kind)}] ${item.title} | urgencia ${item.urgency} | impacto ${item.impact} | revisar ${dateEs(String(item.reviewDate).slice(0, 10))} | accion: ${item.action}`) : ['- No hay recomendaciones activas.']), '', '## Seguimiento de decisiones', ...(reviews.length ? reviews.slice(0, 12).map(item => `- ${item.phaseLabel} | ${item.title} | estado ${item.statusLabel} | revision ${dateEs(String(item.reviewDate || '').slice(0, 10))} | esperado: ${item.expectedOutcome || '-'} | observado: ${item.actualOutcome || '-'} | aprendizaje: ${item.lesson || '-'}`) : ['- No hay revisiones registradas.']), '', '## Cartera', '| Empresa | Ticker | ISIN | Valor | Peso | Dividendo anual | Yield | YOC | Estado |', '|---|---|---|---:|---:|---:|---:|---:|---|', ...portfolio.map(position => `| ${position.name.replaceAll('|', '/')} | ${position.symbol} | ${position.isin} | ${eur.format(position.marketValue || 0)} | ${formatPercent(position.allocation)} | ${eur.format(position.annualDividend || 0)} | ${formatPercent(position.dividendYield)} | ${formatPercent(position.yieldOnCost)} | ${position.status} |`), '', '## Distribucion por sectores', ...sector.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`), '', '## Distribucion geografica', ...country.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`), '', '## Liquidez, activos y deuda', ...state.assets.map(asset => `- Activo ${asset.name} (${asset.type}): ${eur.format(asset.value || 0)}`), ...state.liabilities.map(liability => `- Deuda ${liability.name} (${liability.type}): ${eur.format(liability.value || 0)}`), '', '## Historico de informes registrados', ...recentReportSummary(), '', '## Comentarios personales', '- Exportado desde la aplicacion local-first. Los datos permanecen en el dispositivo.'].join('\n'); }
+async function markdown() { const portfolio = sortedPortfolio(activePortfolio()); const metrics = fullMetrics(portfolio); const score = portfolioScore(portfolio); const filename = `comite-inversion-family-office-${new Date().toISOString().slice(0, 10)}.md`; const promptTemplate = await loadAnalysisPromptTemplate(); const dataBlock = buildPortfolioDataMarkdown(); const finalDocument = mergePromptWithData(promptTemplate, dataBlock); download(filename, finalDocument, 'text/markdown'); saveReportHistoryEntry({ ...defaultReportEntry(), createdAt: new Date().toISOString(), score: score.value, netWorth: metrics.netWorth, dividends: metrics.dividends, concentrationLabel: score.concentrationLabel, filename }); saveState(); renderReportHistory(); showNotice('Informe generado con prompt editable y registrado en el historico.'); }
+ensureAdvisoryState();
+saveState();
+render();

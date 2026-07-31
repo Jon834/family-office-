@@ -1335,3 +1335,30 @@ input[type='file'][hidden]{display:none !important;visibility:hidden !important;
 
 .history-filter-panel{align-items:end}
 .history-filter-help{display:flex;align-items:center;min-height:46px;padding:0 4px}
+
+.plan-controls{align-items:end}
+.plan-kpis{margin-top:0}
+.plan-grid{align-items:stretch}
+#planNarrative{min-height:92px;margin-bottom:16px}
+#planAssumptions .signal-row span{font-weight:700}
+.plan-lever-positive strong{color:var(--success)}
+.plan-lever-neutral strong{color:var(--warning)}
+.plan-lever-weak strong{color:var(--danger)}
+body.dark .plan-lever-positive strong{color:#86efac}
+body.dark .plan-lever-neutral strong{color:#fcd34d}
+body.dark .plan-lever-weak strong{color:#fca5a5}
+
+.advisor-controls{align-items:end}
+.advisor-grid{align-items:stretch}
+.priority-card{display:grid;gap:6px;padding:14px 16px;border-radius:16px;border:1px solid var(--border);background:linear-gradient(180deg,#fcfcfc,#f7f7f8)}
+.priority-card strong{color:var(--slate-deep)}
+.priority-card span{color:var(--orange);font-weight:700}
+.priority-card small{color:var(--muted)}
+body.dark .priority-card{background:linear-gradient(180deg,#27272a,#212125);border-color:#3f3f46}
+body.dark .priority-card strong{color:#fafaf9}
+body.dark .priority-card small{color:#d4d4d8}
+.recommendation-actions{display:flex;gap:6px;flex-wrap:wrap}
+.recommendation-actions wa-button{margin:0}
+#advisorDiagnosis strong,#advisorOptionsSummary strong{color:var(--slate-deep)}
+body.dark #advisorDiagnosis strong,body.dark #advisorOptionsSummary strong{color:#fafaf9}
+body.dark .recommendation-actions wa-button::part(base){background:#27272a;border-color:#52525b;color:#fafaf9}

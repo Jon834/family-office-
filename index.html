@@ -34,17 +34,29 @@
     </div>
   </header>
   <nav class="nav-tabs" aria-label="Secciones">
-    <button class="nav-item active" data-view="dashboard"><wa-icon name="chart-line"></wa-icon>Resumen</button>
+    <button class="nav-item active" data-view="dashboard"><wa-icon name="chart-line"></wa-icon>Asesor</button>
     <button class="nav-item" data-view="portfolio"><wa-icon name="briefcase"></wa-icon>Cartera</button>
     <button class="nav-item" data-view="history"><wa-icon name="clock-rotate-left"></wa-icon>Historico</button>
+    <button class="nav-item" data-view="plan"><wa-icon name="bullseye"></wa-icon>Plan</button>
     <button class="nav-item" data-view="settings"><wa-icon name="gear"></wa-icon>Datos</button>
   </nav>
   <main class="app-shell">
     <section id="dashboard" class="view active">
       <div class="hero">
-        <div><p class="eyebrow">SITUACION ACTUAL</p><h1>Tu patrimonio, en una sola vista</h1><p id="lastUpdated">Importa el CSV de DivvyDiary para comenzar.</p></div>
+        <div><p class="eyebrow">ASESOR PATRIMONIAL</p><h1>Oficina patrimonial personal</h1><p id="lastUpdated">Importa el CSV de DivvyDiary para comenzar.</p></div>
         <wa-button id="snapshotBtn" appearance="outlined"><wa-icon slot="start" name="camera"></wa-icon>Guardar cierre mensual</wa-button>
       </div>
+      <wa-card class="panel controls controls-wide advisor-controls"><wa-input id="advisorMinLiquidity" label="Liquidez minima deseada (EUR)" inputmode="decimal"></wa-input><wa-input id="advisorUpcomingDebt" label="Hipoteca o deuda futura (EUR)" inputmode="decimal"></wa-input><wa-input id="advisorUpcomingDebtMonths" label="Meses hasta formalizar" inputmode="numeric"></wa-input><wa-input id="advisorSavingsCapacity" label="Capacidad mensual de ahorro (EUR)" inputmode="decimal"></wa-input><wa-input id="advisorEmergencyFund" label="Fondo de emergencia objetivo (EUR)" inputmode="decimal"></wa-input></wa-card>
+      <div class="dashboard-grid advisor-grid">
+        <wa-card class="panel"><div class="panel-head"><div><h2>Diagnostico ejecutivo</h2><p>Interpretacion priorizada de la situacion patrimonial</p></div></div><div id="advisorDiagnosis" class="summary-stack empty-state">Sin datos</div></wa-card>
+        <wa-card class="panel"><div class="panel-head"><div><h2>Tres prioridades del mes</h2><p>Solo lo mas importante para proteger y mejorar la situacion</p></div></div><div id="advisorPriorities" class="scenario-list empty-state">Sin datos</div></wa-card>
+      </div>
+      <div class="dashboard-grid advisor-grid">
+        <wa-card class="panel"><div class="panel-head"><div><h2>Semaforos patrimoniales</h2><p>Liquidez, deuda, concentracion, dividendos y opciones</p></div></div><div id="advisorSignals" class="signal-list empty-state">Sin datos</div></wa-card>
+        <wa-card class="panel"><div class="panel-head"><div><h2>Opciones y capital comprometido</h2><p>Impacto de puts, vencimientos y asignaciones potenciales</p></div></div><div id="advisorOptionsSummary" class="summary-stack empty-state">Sin datos</div><div id="advisorOptionsAlerts" class="signal-list empty-state">Sin datos</div></wa-card>
+      </div>
+      <wa-card class="panel"><div class="panel-head"><div><h2>Centro de recomendaciones</h2><p>Tareas patrimoniales priorizadas y revisables</p></div></div><div class="table-wrap"><table><thead><tr><th>Titulo</th><th>Urgencia</th><th>Impacto</th><th>Riesgo de no actuar</th><th>Revision</th><th>Estado</th><th></th></tr></thead><tbody id="recommendationRows"><tr><td colspan="7" class="empty-cell">Sin recomendaciones todavia.</td></tr></tbody></table></div></wa-card>
+      <wa-card class="panel"><div class="panel-head"><div><h2>Seguimiento de decisiones</h2><p>Revision a 3, 6 y 12 meses para aprender de la estrategia</p></div></div><div class="table-wrap"><table><thead><tr><th>Decision</th><th>Fecha</th><th>Revision</th><th>Estado</th><th>Aprendizaje</th></tr></thead><tbody id="decisionRows"><tr><td colspan="5" class="empty-cell">Aun no hay decisiones registradas.</td></tr></tbody></table></div></wa-card>
       <div class="kpi-grid">
         <article class="kpi"><span>Valor de cartera</span><strong id="kpiValue">0 EUR</strong><small id="kpiPositions">0 posiciones</small></article>
         <article class="kpi"><span>Coste invertido</span><strong id="kpiCost">0 EUR</strong><small id="kpiGain">Plusvalia: 0 EUR</small></article>
@@ -101,6 +113,11 @@
         </wa-card>
       </div>
       <wa-card class="panel"><div class="panel-head"><div><h2>Libro de operaciones</h2><p>Historico de compras y ventas importadas desde DivvyDiary</p></div></div><div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Empresa</th><th>Cantidad</th><th>Precio</th><th>Importe</th><th>Costes</th><th>Cartera</th></tr></thead><tbody id="transactionRows"><tr><td colspan="8" class="empty-cell">Importa el CSV de transacciones.</td></tr></tbody></table></div></wa-card>
+      <div class="dashboard-grid decision-grid">
+        <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Operativa con opciones</h2><p>Registro manual de puts, primas y capital comprometido</p></div></div><form id="optionForm" class="stack-form"><div class="inline-form"><wa-input id="optionUnderlying" label="Subyacente"></wa-input><wa-input id="optionTicker" label="Ticker"></wa-input><wa-input id="optionIsin" label="ISIN"></wa-input></div><div class="inline-form"><wa-select id="optionType" label="Tipo" value="put"><wa-option value="put">Put</wa-option><wa-option value="call">Call</wa-option></wa-select><wa-select id="optionStrategy" label="Estrategia" value="cash-secured-put"><wa-option value="cash-secured-put">Venta de put</wa-option><wa-option value="covered-call">Covered call</wa-option><wa-option value="other">Otra</wa-option></wa-select><wa-select id="optionObjective" label="Objetivo" value="acquire"><wa-option value="acquire">Adquirir acciones</wa-option><wa-option value="income">Generar primas</wa-option></wa-select></div><div class="inline-form"><wa-input id="optionOpenedAt" label="Apertura" type="date"></wa-input><wa-input id="optionExpiration" label="Vencimiento" type="date"></wa-input><wa-input id="optionStrike" label="Strike" inputmode="decimal"></wa-input></div><div class="inline-form"><wa-input id="optionContracts" label="Contratos" inputmode="numeric"></wa-input><wa-input id="optionMultiplier" label="Multiplicador" inputmode="numeric"></wa-input><wa-input id="optionPremiumPerShare" label="Prima por accion" inputmode="decimal"></wa-input></div><div class="inline-form"><wa-input id="optionFees" label="Comisiones" inputmode="decimal"></wa-input><wa-input id="optionCollateral" label="Garantia reservada" inputmode="decimal"></wa-input><wa-select id="optionStatus" label="Estado" value="open"><wa-option value="open">Abierta</wa-option><wa-option value="closed">Cerrada</wa-option><wa-option value="expired">Vencida sin valor</wa-option><wa-option value="assigned">Asignada</wa-option><wa-option value="rolled">Rolada</wa-option></wa-select></div><wa-textarea id="optionThesis" label="Tesis y riesgo" rows="3"></wa-textarea><wa-button type="submit" variant="brand">Anadir operacion</wa-button></form></wa-card>
+        <wa-card class="panel"><div class="panel-head"><div><h2>Resumen de opciones</h2><p>Liquidez comprometida, primas y exposicion potencial</p></div></div><div id="optionSummary" class="summary-stack empty-state">Sin operaciones registradas.</div></wa-card>
+      </div>
+      <wa-card class="panel"><div class="panel-head"><div><h2>Posiciones en opciones</h2><p>Control de vencimientos, asignaciones y disciplina operativa</p></div></div><div class="table-wrap"><table><thead><tr><th>Subyacente</th><th>Tipo</th><th>Objetivo</th><th>Vencimiento</th><th>Prima neta</th><th>Capital comprometido</th><th>Estado</th><th></th></tr></thead><tbody id="optionRows"><tr><td colspan="8" class="empty-cell">No hay posiciones en opciones.</td></tr></tbody></table></div></wa-card>
     </section>
 
     <section id="history" class="view">
@@ -124,6 +141,25 @@
       <wa-card class="panel"><div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Cartera</th><th>Patrimonio neto</th><th>Liquidez</th><th>Deuda</th><th>Dividendos</th><th>Posiciones</th><th></th></tr></thead><tbody id="historyRows"><tr><td colspan="8" class="empty-cell">No hay cierres guardados.</td></tr></tbody></table></div></wa-card>
     </section>
 
+
+    <section id="plan" class="view">
+      <div class="section-head"><div><p class="eyebrow">PLAN</p><h1>Prevision de cumplimiento</h1><p>Simula cuando alcanzarias tus metas con tres escenarios y varias palancas de decision.</p></div></div>
+      <wa-card class="panel controls controls-wide plan-controls"><wa-select id="planTargetType" label="Objetivo"><wa-option value="fi">Independencia financiera</wa-option><wa-option value="networth">Patrimonio neto</wa-option><wa-option value="dividends">Dividendos anuales</wa-option></wa-select><wa-input id="planTargetValue" label="Valor objetivo (EUR)" inputmode="decimal"></wa-input><wa-input id="planMonthlyContribution" label="Aportacion mensual (EUR)" inputmode="decimal"></wa-input><wa-input id="planMonthlyExpense" label="Gasto mensual (EUR)" inputmode="decimal"></wa-input><wa-input id="planHorizonYears" label="Horizonte maximo (anos)" inputmode="numeric"></wa-input></wa-card>
+      <div class="kpi-grid plan-kpis">
+        <article class="kpi"><span>Brecha actual</span><strong id="planGapValue">0 EUR</strong><small id="planGapMeta">Configura una meta para estimar la distancia.</small></article>
+        <article class="kpi"><span>Escenario central</span><strong id="planCentralEta">--</strong><small id="planCentralMeta">Sin proyeccion.</small></article>
+        <article class="kpi"><span>Mejor palanca</span><strong id="planBestLeverValue">--</strong><small id="planBestLeverMeta">Sin comparativa.</small></article>
+        <article class="kpi"><span>Viabilidad</span><strong id="planFeasibilityValue">--</strong><small id="planFeasibilityMeta">Importa datos y define objetivos.</small></article>
+      </div>
+      <div class="dashboard-grid plan-grid">
+        <wa-card class="panel"><div class="panel-head"><div><h2>Escenarios</h2><p>Prudente, central y favorable</p></div></div><div id="planScenarioRows" class="scenario-list empty-state">Sin datos</div></wa-card>
+        <wa-card class="panel"><div class="panel-head"><div><h2>Palancas de decision</h2><p>Impacto orientativo sobre el plazo</p></div></div><div id="planLeverRows" class="signal-list empty-state">Sin datos</div></wa-card>
+      </div>
+      <div class="dashboard-grid plan-grid">
+        <wa-card class="panel"><div class="panel-head"><div><h2>Trayectoria proyectada</h2><p>Progreso hacia la meta en porcentaje</p></div></div><div id="planProjectionChart" class="history-chart empty-state">Sin datos</div></wa-card>
+        <wa-card class="panel"><div class="panel-head"><div><h2>Lectura del plan</h2><p>Como interpretar la simulacion</p></div></div><div id="planNarrative" class="summary-stack empty-state">Sin datos</div><div id="planAssumptions" class="signal-list empty-state">Sin datos</div></wa-card>
+      </div>
+    </section>
     <section id="settings" class="view">
       <div class="section-head"><div><p class="eyebrow">DATOS Y PRIVACIDAD</p><h1>Copias, patrimonio y objetivos</h1><p>La informacion permanece en este navegador. GitHub Pages no recibe tus datos.</p></div></div>
       <div class="settings-grid">
