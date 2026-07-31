@@ -1,4 +1,4 @@
-FAMILY OFFICE NUNEZ - INSTALACION
+FAMILY OFFICE NÚÑEZ - INSTALACIÓN
 
 1. Esta app es una PWA y debe servirse desde una dirección web segura (HTTPS) o desde localhost.
 2. La forma más sencilla es publicar la carpeta en GitHub Pages, Netlify, Cloudflare Pages o un servidor interno.
