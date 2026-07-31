@@ -63,6 +63,21 @@
         <wa-card class="panel"><div class="panel-head"><div><h2>Último cierre</h2><p>Evolución mensual</p></div></div><div class="summary-stack"><strong id="latestSnapshot">Todavía no hay cierres mensuales.</strong><small id="snapshotDelta">Necesitas al menos dos cierres para ver variaciones.</small></div></wa-card>
         <wa-card class="panel"><div class="panel-head"><div><h2>Copias automáticas</h2><p>Previas a importaciones</p></div></div><div class="summary-stack"><strong id="backupStatus">Todavía no se ha generado ninguna copia automática previa a importación.</strong><small>Siempre puedes exportar una copia JSON completa desde la pestaña Datos.</small></div></wa-card>
       </div>
+      <div class="dashboard-grid">
+        <wa-card class="panel">
+          <div class="panel-head"><div><h2>Salud de la cartera</h2><p>Diversificación, concentración y riesgo</p></div></div>
+          <div class="score-block">
+            <div class="score-ring" id="portfolioScore">0</div>
+            <div class="summary-stack"><strong id="portfolioScoreLabel">Sin datos</strong><small id="portfolioScoreMeta">Importa una cartera para calcular la puntuación global.</small></div>
+          </div>
+          <div id="concentrationRows" class="signal-list empty-state">Sin datos</div>
+        </wa-card>
+        <wa-card class="panel">
+          <div class="panel-head"><div><h2>Independencia financiera</h2><p>Escenarios prudente, central y favorable</p></div></div>
+          <div class="summary-stack"><strong id="fiGoalStatus">Configura tu gasto mensual para ver escenarios.</strong><small id="fiGoalMeta">Se calcula con dividendos actuales, aportación mensual y tres supuestos de crecimiento.</small></div>
+          <div id="fiRows" class="scenario-list empty-state">Sin datos</div>
+        </wa-card>
+      </div>
       <wa-card class="panel"><div class="panel-head"><div><h2>Principales posiciones</h2><p>Por peso actual en cartera</p></div><wa-button appearance="plain" data-go="portfolio">Ver cartera completa</wa-button></div><div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Valor</th><th>Peso</th><th>Dividendo anual</th><th>Yield</th></tr></thead><tbody id="topPositions"><tr><td colspan="5" class="empty-cell">Todavía no hay posiciones.</td></tr></tbody></table></div></wa-card>
     </section>
     <section id="portfolio" class="view">
@@ -79,15 +94,16 @@
       <div class="section-head"><div><p class="eyebrow">DATOS Y PRIVACIDAD</p><h1>Copias, patrimonio y objetivos</h1><p>La información permanece en este navegador. GitHub Pages no recibe tus datos.</p></div></div>
       <div class="settings-grid">
         <wa-card class="action-card"><wa-icon name="rotate-left"></wa-icon><h2>Deshacer última importación</h2><p id="undoHelpText">No hay ninguna importación reciente para revertir.</p><wa-button id="undoImportSettingsBtn" appearance="outlined" disabled>Deshacer importación</wa-button></wa-card>
-        <wa-card class="action-card"><wa-icon name="file-export"></wa-icon><h2>Exportar copia JSON</h2><p>Guarda cartera, cierres mensuales, activos, deudas y configuración.</p><wa-button id="exportJsonBtn" appearance="outlined">Descargar copia</wa-button></wa-card>
+        <wa-card class="action-card"><wa-icon name="file-export"></wa-icon><h2>Exportar copia JSON</h2><p>Guarda cartera, cierres mensuales, activos, deudas, informes y configuración.</p><wa-button id="exportJsonBtn" appearance="outlined">Descargar copia</wa-button></wa-card>
         <wa-card class="action-card"><wa-icon name="file-import"></wa-icon><h2>Restaurar copia JSON</h2><p>Recupera los datos en este u otro dispositivo.</p><wa-button id="restoreJsonBtn" appearance="outlined">Seleccionar archivo</wa-button></wa-card>
-        <wa-card class="action-card"><wa-icon name="robot"></wa-icon><h2>Informe para ChatGPT</h2><p>Genera un Markdown con cartera, patrimonio adicional, deuda y objetivos.</p><wa-button id="markdownBtn" variant="brand">Descargar informe</wa-button></wa-card>
+        <wa-card class="action-card"><wa-icon name="robot"></wa-icon><h2>Informe para ChatGPT</h2><p>Genera un Markdown y guarda un registro histórico del informe.</p><wa-button id="markdownBtn" variant="brand">Descargar informe</wa-button></wa-card>
       </div>
       <div class="settings-grid settings-grid-late">
         <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Activos adicionales</h2><p>Liquidez, monetarios, letras, inmuebles u otros activos.</p></div></div><form id="assetForm" class="stack-form"><div class="inline-form"><wa-input id="assetName" label="Nombre"></wa-input><wa-select id="assetType" label="Tipo" value="cash"><wa-option value="cash">Efectivo</wa-option><wa-option value="money-market">Fondo monetario</wa-option><wa-option value="treasury">Letras del Tesoro</wa-option><wa-option value="property">Inmueble</wa-option><wa-option value="other">Otro</wa-option></wa-select><wa-input id="assetValue" label="Valor (€)" inputmode="decimal"></wa-input></div><wa-textarea id="assetNotes" label="Notas" rows="2"></wa-textarea><wa-button type="submit" variant="brand">Añadir activo</wa-button></form><div class="table-wrap"><table><thead><tr><th>Nombre</th><th>Tipo</th><th>Valor</th><th>Notas</th><th></th></tr></thead><tbody id="assetRows"><tr><td colspan="5" class="empty-cell">No hay activos adicionales.</td></tr></tbody></table></div></wa-card>
         <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Deudas</h2><p>Hipotecas, préstamos u otras obligaciones.</p></div></div><form id="liabilityForm" class="stack-form"><div class="inline-form"><wa-input id="liabilityName" label="Nombre"></wa-input><wa-select id="liabilityType" label="Tipo" value="mortgage"><wa-option value="mortgage">Hipoteca</wa-option><wa-option value="loan">Préstamo</wa-option><wa-option value="other">Otra</wa-option></wa-select><wa-input id="liabilityValue" label="Saldo (€)" inputmode="decimal"></wa-input></div><wa-textarea id="liabilityNotes" label="Notas" rows="2"></wa-textarea><wa-button type="submit" variant="brand">Añadir deuda</wa-button></form><div class="table-wrap"><table><thead><tr><th>Nombre</th><th>Tipo</th><th>Saldo</th><th>Notas</th><th></th></tr></thead><tbody id="liabilityRows"><tr><td colspan="5" class="empty-cell">No hay deudas registradas.</td></tr></tbody></table></div></wa-card>
       </div>
-      <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Objetivos financieros</h2><p>Se usan para progreso de dividendos y patrimonio neto en el dashboard.</p></div></div><form id="settingsForm" class="inline-form four-cols"><wa-input id="monthlyExpenseInput" label="Gasto mensual (€)" inputmode="decimal"></wa-input><wa-input id="targetDividendInput" label="Objetivo dividendos (€)" inputmode="decimal"></wa-input><wa-input id="targetNetWorthInput" label="Objetivo patrimonio (€)" inputmode="decimal"></wa-input><wa-input id="monthlyContributionInput" label="Aportación mensual (€)" inputmode="decimal"></wa-input><div class="full-width"><wa-button type="submit" variant="brand">Guardar objetivos</wa-button></div></form></wa-card>
+      <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Objetivos financieros</h2><p>Se usan para progreso de dividendos, score e independencia financiera.</p></div></div><form id="settingsForm" class="inline-form four-cols"><wa-input id="monthlyExpenseInput" label="Gasto mensual (€)" inputmode="decimal"></wa-input><wa-input id="targetDividendInput" label="Objetivo dividendos (€)" inputmode="decimal"></wa-input><wa-input id="targetNetWorthInput" label="Objetivo patrimonio (€)" inputmode="decimal"></wa-input><wa-input id="monthlyContributionInput" label="Aportación mensual (€)" inputmode="decimal"></wa-input><div class="full-width"><wa-button type="submit" variant="brand">Guardar objetivos</wa-button></div></form></wa-card>
+      <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Histórico de informes</h2><p>Permite comparar recomendaciones y evolución de la cartera mes a mes.</p></div></div><div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Score</th><th>Patrimonio neto</th><th>Dividendos</th><th>Concentración</th></tr></thead><tbody id="reportRows"><tr><td colspan="5" class="empty-cell">Todavía no hay informes generados.</td></tr></tbody></table></div></wa-card>
       <wa-card class="action-card danger-card"><wa-icon name="trash"></wa-icon><h2>Borrar datos locales</h2><p>Elimina definitivamente la información de este navegador.</p><wa-button id="clearBtn" variant="danger" appearance="outlined">Borrar todo</wa-button></wa-card>
     </section>
   </main>
@@ -112,4 +128,3 @@
   <div id="notice" class="notice" role="status" aria-live="polite"></div>
 </body>
 </html>
-
