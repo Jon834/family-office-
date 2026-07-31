@@ -319,9 +319,9 @@ function createDemoState() {
     ],
     decisionReviews: [
       { id: 'decision-demo-1', recommendationId: 'liq-buffer', title: 'Reforzar la reserva de liquidez antes de nuevas compras', category: 'Liquidez', phase: '3m', phaseLabel: 'Revision 3 meses', actionLabel: 'Aceptada', status: 'pending', statusLabel: 'Pendiente', reason: 'Se prioriza caja hasta firma hipotecaria.', expectedOutcome: 'Proteger flexibilidad y evitar ventas forzadas.', actualOutcome: '', lesson: '', createdAt: '2026-07-01T08:00:00.000Z', decidedAt: '2026-07-18T08:00:00.000Z', reviewDate: '2026-10-18', reviewedAt: '' },
-      { id: 'decision-demo-2', recommendationId: 'acs-freeze-q1', title: 'No ampliar ACS durante el primer trimestre', category: 'Concentracion', phase: '6m', phaseLabel: 'Revision 6 meses', actionLabel: 'Ejecutada', status: 'reviewing', statusLabel: 'En revision', reason: 'Se evitó seguir cargando una posicion ya dominante.', expectedOutcome: 'Reducir sesgo en empresa y pais.', actualOutcome: 'La concentracion bajo ligeramente y se desplegó capital en Visa y ASML.', lesson: 'La disciplina de no comprar tambien es una decision rentable en riesgo.', createdAt: '2026-01-12T08:00:00.000Z', decidedAt: '2026-01-15T08:00:00.000Z', reviewDate: '2026-07-15', reviewedAt: '2026-07-30T19:00:00.000Z' },
-      { id: 'decision-demo-3', recommendationId: 'eng-review-2025', title: 'Reducir el peso de Enagas y revisar tesis de dividendo', category: 'Dividendos', phase: '12m', phaseLabel: 'Revision 12 meses', actionLabel: 'Ejecutada', status: 'closed', statusLabel: 'Cerrada', reason: 'Se detectó deterioro regulatorio y menor calidad de crecimiento.', expectedOutcome: 'Reducir riesgo de trampa de yield.', actualOutcome: 'Se recortó exposicion y el capital se reasignó a negocios de mayor calidad.', lesson: 'El yield alto no compensaba el menor crecimiento y la dependencia regulatoria.', createdAt: '2025-07-20T08:00:00.000Z', decidedAt: '2025-07-24T08:00:00.000Z', reviewDate: '2026-07-24', reviewedAt: '2026-07-29T18:30:00.000Z' },
-      { id: 'decision-demo-4', recommendationId: 'cash-floor-2025', title: 'Mantener un suelo minimo de liquidez durante la compra de vivienda', category: 'Liquidez', phase: '12m', phaseLabel: 'Revision 12 meses', actionLabel: 'Ejecutada', status: 'closed', statusLabel: 'Cerrada', reason: 'La prioridad patrimonial era no comprometer la compra ni asumir ventas forzadas.', expectedOutcome: 'Llegar a la firma con margen de seguridad.', actualOutcome: 'Se mantuvo flexibilidad, pero la venta de puts agresivas recortó parte del beneficio de la decision.', lesson: 'La politica de liquidez debe incluir tambien el capital comprometido en opciones, no solo la caja visible.', createdAt: '2025-08-10T08:00:00.000Z', decidedAt: '2025-08-12T08:00:00.000Z', reviewDate: '2026-08-12', reviewedAt: '2026-07-30T18:40:00.000Z' }
+            { id: 'decision-demo-2', recommendationId: 'acs-freeze-q1', title: 'No ampliar ACS durante el primer trimestre', category: 'Concentracion', phase: '6m', phaseLabel: 'Revision 6 meses', actionLabel: 'Ejecutada', status: 'reviewing', statusLabel: 'En revision', reason: 'Se evit\u00f3 seguir cargando una posicion ya dominante.', expectedOutcome: 'Reducir sesgo en empresa y pais.', actualOutcome: 'La concentracion bajo ligeramente y se despleg\u00f3 capital en Visa y ASML.', lesson: 'La disciplina de no comprar tambien es una decision rentable en riesgo.', createdAt: '2026-01-12T08:00:00.000Z', decidedAt: '2026-01-15T08:00:00.000Z', reviewDate: '2026-07-15', reviewedAt: '2026-07-30T19:00:00.000Z' },
+            { id: 'decision-demo-3', recommendationId: 'eng-review-2025', title: 'Reducir el peso de Enagas y revisar tesis de dividendo', category: 'Dividendos', phase: '12m', phaseLabel: 'Revision 12 meses', actionLabel: 'Ejecutada', status: 'closed', statusLabel: 'Cerrada', reason: 'Se detect\u00f3 deterioro regulatorio y menor calidad de crecimiento.', expectedOutcome: 'Reducir riesgo de trampa de yield.', actualOutcome: 'Se recort\u00f3 exposicion y el capital se reasign\u00f3 a negocios de mayor calidad.', lesson: 'El yield alto no compensaba el menor crecimiento y la dependencia regulatoria.', createdAt: '2025-07-20T08:00:00.000Z', decidedAt: '2025-07-24T08:00:00.000Z', reviewDate: '2026-07-24', reviewedAt: '2026-07-29T18:30:00.000Z' },
+            { id: 'decision-demo-4', recommendationId: 'cash-floor-2025', title: 'Mantener un suelo minimo de liquidez durante la compra de vivienda', category: 'Liquidez', phase: '12m', phaseLabel: 'Revision 12 meses', actionLabel: 'Ejecutada', status: 'closed', statusLabel: 'Cerrada', reason: 'La prioridad patrimonial era no comprometer la compra ni asumir ventas forzadas.', expectedOutcome: 'Llegar a la firma con margen de seguridad.', actualOutcome: 'Se mantuvo flexibilidad, pero la venta de puts agresivas recort\u00f3 parte del beneficio de la decision.', lesson: 'La politica de liquidez debe incluir tambien el capital comprometido en opciones, no solo la caja visible.', createdAt: '2025-08-10T08:00:00.000Z', decidedAt: '2025-08-12T08:00:00.000Z', reviewDate: '2026-08-12', reviewedAt: '2026-07-30T18:40:00.000Z' }
     ],
     advisor: { minimumLiquidityTarget: 30000, upcomingDebt: 270000, upcomingDebtMonths: 8, savingsCapacity: 1500, emergencyFundTarget: 18000 },
     backups: [],
@@ -1790,8 +1790,16 @@ render();
 function loadGuidedDemo() {
   askConfirm('Se sustituiran los datos locales actuales por la demo anual de ejemplo. Puedes exportar una copia JSON antes si quieres conservarlos.', () => {
     const currentTheme = state.theme === 'dark' ? 'dark' : 'light';
-    const demo = createDemoState();
+    const demo = migrateState({
+      ...createDemoState(),
+      transactions: DEMO_TRANSACTIONS.map(migrateTransaction),
+      tableSorts: defaultTableSorts(),
+      lastImportUndo: null,
+      backups: [],
+      theme: currentTheme
+    });
     Object.assign(state, defaultState(), demo, { theme: currentTheme, lastImportUndo: null, backups: [] });
+    ensureAdvisoryState();
     saveState();
     render();
     showNotice('Demo anual cargada en la aplicacion.');
