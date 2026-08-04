@@ -527,27 +527,50 @@ function migratePosition(position) {
   };
 }
 
+function migrateSnapshotOwnerMetrics(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    value: toNum(raw.value, 0) || 0,
+    cost: toNum(raw.cost, 0) || 0,
+    gain: toNum(raw.gain, 0) || 0,
+    dividends: toNum(raw.dividends, 0) || 0,
+    count: Number.isFinite(raw.count) ? raw.count : 0,
+    liquidity: toNum(raw.liquidity, 0) || 0,
+    otherAssets: toNum(raw.otherAssets, 0) || 0,
+    debt: toNum(raw.debt, 0) || 0,
+    netWorth: toNum(raw.netWorth, 0) || 0
+  };
+}
 function migrateSnapshot(snapshot) {
   if (!snapshot || typeof snapshot !== 'object') {
     return null;
   }
+  const consolidatedFallback = migrateSnapshotOwnerMetrics(snapshot);
+  const rawByOwner = snapshot.byOwner && typeof snapshot.byOwner === 'object' ? snapshot.byOwner : null;
+  const byOwner = { all: migrateSnapshotOwnerMetrics(rawByOwner?.all) || consolidatedFallback };
+  OWNER_IDS.forEach(id => { byOwner[id] = migrateSnapshotOwnerMetrics(rawByOwner?.[id]); });
   return {
     id: snapshot.id || `snapshot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     month: snapshot.month || String(snapshot.date || '').slice(0, 7),
     date: snapshot.date || new Date().toISOString(),
-    value: toNum(snapshot.value, 0) || 0,
-    cost: toNum(snapshot.cost, 0) || 0,
-    gain: toNum(snapshot.gain, 0) || 0,
-    dividends: toNum(snapshot.dividends, 0) || 0,
-    count: Number.isFinite(snapshot.count) ? snapshot.count : 0,
-    liquidity: toNum(snapshot.liquidity, 0) || 0,
-    otherAssets: toNum(snapshot.otherAssets, 0) || 0,
-    debt: toNum(snapshot.debt, 0) || 0,
-    netWorth: toNum(snapshot.netWorth, 0) || 0,
+    ...byOwner.all,
+    byOwner,
     monthlyContribution: toNum(snapshot.monthlyContribution, null),
     notes: cleanText(snapshot.notes),
     positions: Array.isArray(snapshot.positions) ? snapshot.positions : []
   };
+}
+function snapshotMetricsForOwner(snapshot, ownerId = state.viewOwnerId) {
+  const key = OWNER_IDS.includes(ownerId) ? ownerId : 'all';
+  return snapshot.byOwner ? snapshot.byOwner[key] : null;
+}
+function ownerHistory(ownerId = state.viewOwnerId) {
+  return state.history
+    .map(snapshot => {
+      const metrics = snapshotMetricsForOwner(snapshot, ownerId);
+      return metrics ? { ...snapshot, ...metrics } : null;
+    })
+    .filter(Boolean);
 }
 
 function saveState() {
@@ -611,6 +634,13 @@ function ownerScaleFn(ownerId) { return record => (ownerId && ownerId !== 'all')
 function totals(list = activePortfolio(), ownerId = state.viewOwnerId) { const scale = ownerScaleFn(ownerId); const value = list.reduce((sum, position) => sum + (position.marketValue || 0) * scale(position), 0); const cost = list.reduce((sum, position) => sum + (position.totalCost || 0) * scale(position), 0); const dividends = list.reduce((sum, position) => sum + (position.annualDividend || 0) * scale(position), 0); const gain = value - cost; return { value, cost, dividends, gain, yield: value ? dividends / value : 0, yoc: cost ? dividends / cost : 0, count: list.length }; }
 function assetTotals(ownerId = state.viewOwnerId) { const scale = ownerScaleFn(ownerId); const ownedAssets = ownerFilteredList(state.assets, ownerId); const ownedLiabilities = ownerFilteredList(state.liabilities, ownerId); const assets = ownedAssets.reduce((sum, asset) => sum + (asset.value || 0) * scale(asset), 0); const liabilities = ownedLiabilities.reduce((sum, liability) => sum + (liability.value || 0) * scale(liability), 0); const liquidity = ownedAssets.filter(asset => ['cash', 'money-market', 'treasury'].includes(asset.type)).reduce((sum, asset) => sum + (asset.value || 0) * scale(asset), 0); return { assets, liabilities, liquidity, otherAssets: assets - liquidity }; }
 function fullMetrics(portfolio = activePortfolio()) { const portfolioTotals = totals(portfolio); const estimate = portfolioEstimateContribution(); const value = portfolioTotals.value + estimate.value; const cost = portfolioTotals.cost + estimate.cost; const dividends = portfolioTotals.dividends + estimate.dividends; const gain = value - cost; const other = assetTotals(); const netWorth = value + other.assets - other.liabilities; const dividendGoal = state.settings.targetAnnualDividends || null; const netWorthGoal = state.settings.targetNetWorth || null; return { ...portfolioTotals, value, cost, dividends, gain, yield: value ? dividends / value : 0, yoc: cost ? dividends / cost : 0, liquidity: other.liquidity, otherAssets: other.otherAssets, liabilities: other.liabilities, netWorth, estimateContribution: estimate, hasEstimate: estimate.owners.length > 0, dividendGoalProgress: dividendGoal ? dividends / dividendGoal : null, netWorthGoalProgress: netWorthGoal ? netWorth / netWorthGoal : null }; }
+function fullMetricsForOwner(ownerId) {
+  const previous = state.viewOwnerId;
+  state.viewOwnerId = ownerId;
+  const metrics = fullMetrics();
+  state.viewOwnerId = previous;
+  return metrics;
+}
 function groupByValue(list, field, totalValue) { const map = {}; list.forEach(position => { const key = position[field] || 'Sin clasificar'; map[key] = (map[key] || 0) + (position.marketValue || 0); }); return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value, weight: totalValue ? value / totalValue : 0 })); }
 function concentrationState(weight, green, amber) { if (weight < green) return { tone: 'good', label: 'Controlada' }; if (weight < amber) return { tone: 'warn', label: 'Vigilar' }; return { tone: 'risk', label: 'Alta' }; }
 function concentrationSignals(portfolio = activePortfolio()) {
@@ -976,7 +1006,7 @@ function buildMacroCards(history, benchmark) {
   };
 }
 function historyYearOptions() {
-  const years = [...new Set((state.history || []).map(snapshot => new Date(snapshot.date).getFullYear()).filter(Number.isFinite))].sort((a, b) => a - b);
+  const years = [...new Set(ownerHistory().map(snapshot => new Date(snapshot.date).getFullYear()).filter(Number.isFinite))].sort((a, b) => a - b);
   return years;
 }
 function renderHistoryFilterOptions() {
@@ -1012,10 +1042,13 @@ function applyHistoryFilters(history) {
   return filtered;
 }
 function renderHistory() {
-  const rows = sortRows(state.history, 'history');
-  $('#historyRows').innerHTML = rows.length ? rows.map(snapshot => `<tr><td>${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(snapshot.date))}</td><td>${eur.format(snapshot.value)}</td><td>${eur.format(snapshot.netWorth || 0)}</td><td>${eur.format(snapshot.liquidity || 0)}</td><td>${eur.format(snapshot.debt || 0)}</td><td>${eur.format(snapshot.dividends)}</td><td>${snapshot.count}</td><td><wa-button size="small" appearance="plain" data-delete-snapshot="${snapshot.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="8" class="empty-cell">No hay cierres guardados.</td></tr>';
+  const ownerId = state.viewOwnerId || 'all';
+  const history = ownerHistory(ownerId);
+  const noBreakdownYet = ownerId !== 'all' && !history.length && state.history.length > 0;
+  const rows = sortRows(history, 'history');
+  $('#historyRows').innerHTML = rows.length ? rows.map(snapshot => `<tr><td>${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium' }).format(new Date(snapshot.date))}</td><td>${eur.format(snapshot.value)}</td><td>${eur.format(snapshot.netWorth || 0)}</td><td>${eur.format(snapshot.liquidity || 0)}</td><td>${eur.format(snapshot.debt || 0)}</td><td>${eur.format(snapshot.dividends)}</td><td>${snapshot.count}</td><td><wa-button size="small" appearance="plain" data-delete-snapshot="${snapshot.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : `<tr><td colspan="8" class="empty-cell">${noBreakdownYet ? 'Los cierres guardados no tienen desglose para este propietario todavía. Se registrará en el próximo cierre mensual.' : 'No hay cierres guardados.'}</td></tr>`;
   renderHistoryFilterOptions();
-  const chronological = [...state.history].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const chronological = [...history].sort((a, b) => new Date(a.date) - new Date(b.date));
   const filteredChronological = applyHistoryFilters(chronological);
   const chart = $('#historyChart');
   const benchmarkChart = $('#benchmarkChart');
@@ -1023,7 +1056,7 @@ function renderHistory() {
   const macroChips = $('#macroChips');
   if (!chronological.length) {
     chart.className = 'history-chart empty-state';
-    chart.textContent = 'Sin cierres mensuales';
+    chart.textContent = noBreakdownYet ? 'Los cierres guardados no tienen desglose para este propietario todavía.' : 'Sin cierres mensuales';
     if (benchmarkChart) {
       benchmarkChart.className = 'history-chart empty-state';
       benchmarkChart.textContent = 'Sin datos comparables';
@@ -1214,7 +1247,15 @@ function confirmTransactionsImport() {
   showNotice(`Importación completada: ${additions.length} operaciones nuevas.`);
   pendingTransactionImport = null;
 }
-function buildMonthlySnapshot(overrides = {}) { const portfolio = activePortfolio(); const metrics = fullMetrics(portfolio); return { id: crypto.randomUUID?.() || String(Date.now()), month: new Date().toISOString().slice(0, 7), date: new Date().toISOString(), value: metrics.value, cost: metrics.cost, gain: metrics.gain, dividends: metrics.dividends, count: metrics.count, liquidity: metrics.liquidity, otherAssets: metrics.otherAssets, debt: metrics.liabilities, netWorth: metrics.netWorth, monthlyContribution: overrides.monthlyContribution ?? state.settings.monthlyContribution, notes: overrides.notes || '', positions: sortedPortfolio(portfolio).slice(0, 10).map(position => ({ isin: position.isin, symbol: position.symbol, name: position.name, value: position.marketValue, weight: position.allocation })) }; }
+function buildMonthlySnapshot(overrides = {}) {
+  const portfolio = activePortfolio();
+  const byOwner = {};
+  ['all', ...OWNER_IDS].forEach(ownerId => {
+    const m = fullMetricsForOwner(ownerId);
+    byOwner[ownerId] = { value: m.value, cost: m.cost, gain: m.gain, dividends: m.dividends, count: m.count, liquidity: m.liquidity, otherAssets: m.otherAssets, debt: m.liabilities, netWorth: m.netWorth };
+  });
+  return { id: crypto.randomUUID?.() || String(Date.now()), month: new Date().toISOString().slice(0, 7), date: new Date().toISOString(), ...byOwner.all, byOwner, monthlyContribution: overrides.monthlyContribution ?? state.settings.monthlyContribution, notes: overrides.notes || '', positions: sortedPortfolio(portfolio).slice(0, 10).map(position => ({ isin: position.isin, symbol: position.symbol, name: position.name, value: position.marketValue, weight: position.allocation })) };
+}
 function currentMonthKey() { return new Date().toISOString().slice(0, 7); }
 function existingSnapshotForMonth(month = currentMonthKey()) { return state.history.find(item => item.month === month) || null; }
 function updateMonthlyClosePreview() {
@@ -2293,7 +2334,7 @@ function renderTransactions() {
   }
 }
 function computeDividendTrend() {
-  const chronological = [...state.history].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const chronological = [...ownerHistory()].sort((a, b) => new Date(a.date) - new Date(b.date));
   if (!chronological.length) return { growth12m: null, latest: fullMetrics().dividends };
   const latest = chronological.at(-1).dividends || fullMetrics().dividends;
   const yearAgo = chronological.find(snapshot => snapshot.date >= `${new Date().getFullYear() - 1}-01-01`) || chronological[0];
@@ -2411,7 +2452,7 @@ function renderOwnerBreakdown() {
 function renderDashboard() {
   const portfolio = activePortfolio();
   const metrics = fullMetrics(portfolio);
-  const snapshots = [...state.history].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const snapshots = [...ownerHistory()].sort((a, b) => new Date(b.date) - new Date(a.date));
   const lastSnapshot = snapshots[0] || null;
   const previousSnapshot = snapshots[1] || null;
   const score = portfolioScore(portfolio);
