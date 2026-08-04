@@ -5,6 +5,9 @@ const ADVISORY_STATUS_LABELS = { pending: 'Pendiente', accepted: 'Aceptada', exe
 const ADVISORY_KIND_LABELS = { fact: 'Hecho objetivo', alert: 'Alerta automática', estimate: 'Estimación', recommendation: 'Recomendación', opinion: 'Revisión humana' };
 const RECOMMENDATION_PRIORITY_WEIGHTS = { 'liq-buffer': 1, 'mortgage-priority': 2, 'options-cash-check': 3, 'leverage-discipline': 4, 'top-position-freeze': 5, 'dividend-review': 6, 'international-balance': 7, 'review-pending': 8 };
 const REVIEW_PHASE_LABELS = { '3m': 'Revisión 3 meses', '6m': 'Revisión 6 meses', '12m': 'Revisión 12 meses' };
+const OPTION_STATUSES = ['proposal', 'open', 'closed', 'expired', 'assigned', 'exercised', 'rolled', 'cancelled'];
+const OPTION_OBJECTIVES = ['buy_lower', 'income', 'protect', 'speculate_up', 'speculate_down', 'reduce_risk', 'other'];
+const OPTION_STATUS_LABELS = { proposal: 'Propuesta', open: 'Abierta', closed: 'Cerrada', expired: 'Vencida sin valor', assigned: 'Asignada', exercised: 'Ejercida', rolled: 'Rolada', cancelled: 'Cancelada' };
 const ANALYSIS_PROMPT_PATH = './chatgpt-analysis-prompt.md';
 const DEFAULT_ANALYSIS_PROMPT = [
   '# Análisis patrimonial para ChatGPT',
@@ -1065,7 +1068,8 @@ function renderUndoState() { const hasUndo = Boolean(state.lastImportUndo?.snaps
 function renderBackupStatus() { $('#backupStatus').textContent = state.lastBackupAt ? `Última copia automática: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(state.lastBackupAt))}.` : 'Todavía no se ha generado ninguna copia automática previa a importación.'; }
 function renderReportHistory() { const rows = sortRows(reportHistoryRows(), 'reports'); $('#reportRows').innerHTML = rows.length ? rows.map(row => `<tr><td>${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(row.createdAt))}</td><td>${row.score === null ? '-' : `${row.score}/100`}</td><td>${row.netWorth === null ? '-' : eur.format(row.netWorth)}</td><td>${row.dividends === null ? '-' : eur.format(row.dividends)}</td><td>${escapeHtml(row.concentrationLabel || '-')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Todavía no hay informes generados.</td></tr>'; }
 function showNotice(message) { const notice = $('#notice'); notice.textContent = message; notice.classList.add('show'); clearTimeout(notice._timer); notice._timer = setTimeout(() => notice.classList.remove('show'), 3500); }
-function switchView(id) { $$('.view').forEach(view => view.classList.toggle('active', view.id === id)); $$('.nav-item').forEach(button => button.classList.toggle('active', button.dataset.view === id)); scrollTo({ top: 0, behavior: 'smooth' }); }
+function switchView(id) { $$('.view').forEach(view => view.classList.toggle('active', view.id === id)); $$('.nav-item[data-view]').forEach(button => button.classList.toggle('active', button.dataset.view === id)); scrollTo({ top: 0, behavior: 'smooth' }); }
+function switchOptionsSubview(id) { $$('.option-subview').forEach(view => view.classList.toggle('active', view.id === id)); $$('.sub-nav-item').forEach(button => button.classList.toggle('active', button.dataset.subview === id)); }
 function openImport() { pendingImport = null; $('#csvFile').value = ''; $('#importMode').value = 'update'; $('#importStepSelect').hidden = false; $('#importStepPreview').hidden = true; $('#confirmImportBtn').hidden = true; $('#importWarnings').hidden = true; $('#importDialog').open = true; }
 function sanitizeRow(row) { return Object.fromEntries(Object.entries(row || {}).map(([key, value]) => [cleanText(key).replace(/^\uFEFF/, ''), value])); }
 function normalizeCsvRow(row, index) { const cleanRow = sanitizeRow(row); const symbol = cleanText(cleanRow.symbol).toUpperCase(); const name = cleanText(cleanRow.name || symbol || `Fila ${index + 2}`); const isin = normalizeIsin(cleanRow.isin); const totalCost = parseLocaleNumber(cleanRow.buyinTotal); const marketValue = parseLocaleNumber(cleanRow.value); const annualDividend = parseLocaleNumber(cleanRow.totalDividendRate); const gain = parseLocaleNumber(cleanRow.gain) ?? (marketValue !== null && totalCost !== null ? marketValue - totalCost : null); const position = { id: isin, isin, symbol, name, quantity: parseLocaleNumber(cleanRow.quantity), averagePrice: parseLocaleNumber(cleanRow.buyin), totalCost, currentPrice: parseLocaleNumber(cleanRow.price), marketValue, gain, gainPercent: parsePercent(cleanRow.gainRel) ?? (gain !== null && totalCost ? gain / totalCost : null), currency: normalizeCurrency(cleanRow.currency), allocation: parsePercent(cleanRow.allocation), dividendYield: parsePercent(cleanRow.dividendYield), yieldOnCost: parsePercent(cleanRow.dividendYieldOnBuyin) ?? (annualDividend !== null && totalCost ? annualDividend / totalCost : null), annualDividend, dividendPerShare: parseLocaleNumber(cleanRow.dividendRate), dividendFrequency: normalizeFrequency(cleanRow.dividendFrequency), dividendCagr: parsePercent(cleanRow.dividendCagr), sector: cleanText(cleanRow.sector) || 'Sin clasificar', country: cleanText(cleanRow.country) || 'Sin país', transactions: parseLocaleNumber(cleanRow.transactions), exDate: normalizeDate(cleanRow.exDate), payDate: normalizeDate(cleanRow.payDate), taxRate: parsePercent(cleanRow.taxRate), notes: '', thesis: '', targetPrice: null, status: 'active', unreliableMatch: !isin, fallbackKey: buildFallbackKey(symbol, name), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), archivedAt: null, importMeta: { source: 'divvydiary', importedAt: new Date().toISOString(), rowNumber: index + 2 }, raw: cleanRow }; const issues = []; if (!isin) issues.push('Posición sin ISIN valido. No se sincroniza automáticamente.'); if (marketValue === null) issues.push('Falta el valor de mercado.'); if (position.quantity === null) issues.push('Falta la cantidad.'); return { rowNumber: index + 2, position, issues }; }
@@ -1445,6 +1449,16 @@ $('#confirmMonthlyCloseBtn')?.addEventListener('click', confirmMonthlyClose);
 $('#monthlyCloseImportPortfolioBtn')?.addEventListener('click', () => { $('#monthlyCloseDialog').open = false; openImport(); });
 $('#monthlyCloseImportTxBtn')?.addEventListener('click', () => { $('#monthlyCloseDialog').open = false; openTransactionsImport(); });
 $('#monthlyCloseGoAssetsBtn')?.addEventListener('click', () => { $('#monthlyCloseDialog').open = false; switchView('settings'); });
+$('#optionActionType')?.addEventListener('change', updateOptionActionFieldsVisibility);
+['#optionActionPremium', '#optionActionFees', '#rollPremiumPerShare', '#rollContracts', '#rollFees'].forEach(selector => {
+  $(selector)?.addEventListener('input', () => { if ($('#optionActionType')?.value === 'roll') updateRollPreview(); });
+});
+$('#cancelOptionActionBtn')?.addEventListener('click', () => { $('#optionActionDialog').open = false; managingOptionId = null; });
+$('#confirmOptionActionBtn')?.addEventListener('click', applyOptionAction);
+document.addEventListener('click', event => {
+  const manageBtn = event.target.closest('[data-manage-option]');
+  if (manageBtn) openOptionActionDialog(manageBtn.dataset.manageOption);
+});
 $('#assetForm')?.addEventListener('submit', addAsset);
 $('#liabilityForm')?.addEventListener('submit', addLiability);
 $('#settingsForm')?.addEventListener('submit', saveFinancialSettings);
@@ -1485,8 +1499,9 @@ $('#confirmOk')?.addEventListener('click', () => {
   $('#confirmDialog').open = false;
   if (action) action();
 });
-$$('.nav-item').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
+$$('.nav-item[data-view]').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
 $$('[data-go]').forEach(button => button.addEventListener('click', () => switchView(button.dataset.go)));
+$$('.sub-nav-item').forEach(button => button.addEventListener('click', () => switchOptionsSubview(button.dataset.subview)));
 ['#searchInput', '#sectorFilter', '#countryFilter', '#currencyFilter', '#statusFilter'].forEach(selector => {
   $(selector)?.addEventListener('input', renderPortfolio);
   $(selector)?.addEventListener('change', renderPortfolio);
@@ -1592,14 +1607,59 @@ function migrateTransaction(entry) {
   return { ...defaultTransaction(), ...entry, id: cleanText(entry.id) || dedupeKey, datetime, date: String(datetime).slice(0, 10), month: String(datetime).slice(0, 7), type, isin: normalizeIsin(entry.isin), symbol: cleanText(entry.symbol).toUpperCase(), name: cleanText(entry.name || entry.symbol || 'Operación sin nombre'), quantity, price: toNum(entry.price, null), amount, currency: normalizeCurrency(entry.currency), fees, taxes, costs: fees + taxes, portfolio: cleanText(entry.portfolio), totalCash: toNum(entry.totalCash, amount === null ? null : (type === 'BUY' ? amount + fees + taxes : amount - fees - taxes)), importMeta: entry.importMeta && typeof entry.importMeta === 'object' ? entry.importMeta : null, raw: entry.raw && typeof entry.raw === 'object' ? entry.raw : null, dedupeKey };
 }
 function defaultOptionPosition() {
-  return { id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, underlying: '', ticker: '', isin: '', optionType: 'put', strategy: 'cash-secured-put', objective: 'acquire', openedAt: new Date().toISOString().slice(0, 10), expiration: '', strike: null, contracts: 1, multiplier: 100, premiumPerShare: null, fees: 0, collateral: null, status: 'open', thesis: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const now = new Date().toISOString();
+  return {
+    id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    underlying: '', ticker: '', isin: '',
+    optionType: 'put', side: 'sell', strategy: 'cash-secured-put', objective: 'income',
+    openedAt: now.slice(0, 10), expiration: '',
+    strike: null, contracts: 1, multiplier: 100, premiumPerShare: null, fees: 0, collateral: null,
+    currency: 'EUR', fxRateToEur: 1,
+    underlyingPriceAtOpen: null, impliedVolatility: null, delta: null,
+    earningsDate: '', exDividendDate: '', expectedDividendPerShare: null,
+    sharesInPortfolio: null, avgCostBasis: null, sector: '', country: '',
+    limitPrice: null, plannedOpenDate: '',
+    marginRequired: null, acceptsUncoveredRisk: false,
+    status: 'open',
+    thesis: '', risks: '', exitPlan: '', assignmentAccepted: true,
+    linkedPositionId: '', rollFromId: '', rolledToId: '',
+    closedAt: '', closePremiumPerShare: null, closeFees: 0, closeReason: '', realizedResult: null,
+    lastScore: null, lastScoreBreakdown: null,
+    notes: '',
+    createdAt: now, updatedAt: now
+  };
 }
 function migrateOptionPosition(option) {
   if (!option || typeof option !== 'object') return null;
+  const base = defaultOptionPosition();
   const optionType = cleanText(option.optionType).toLowerCase() === 'call' ? 'call' : 'put';
+  const side = cleanText(option.side).toLowerCase() === 'buy' ? 'buy' : 'sell';
   const statusValue = cleanText(option.status).toLowerCase();
-  const status = ['closed', 'expired', 'assigned', 'rolled'].includes(statusValue) ? statusValue : 'open';
-  return { ...defaultOptionPosition(), ...option, id: cleanText(option.id) || `opt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, underlying: cleanText(option.underlying), ticker: cleanText(option.ticker).toUpperCase(), isin: normalizeIsin(option.isin) || cleanText(option.isin).toUpperCase(), optionType, strategy: cleanText(option.strategy) || 'cash-secured-put', objective: cleanText(option.objective) || 'acquire', openedAt: normalizeDate(option.openedAt) || cleanText(option.openedAt), expiration: normalizeDate(option.expiration) || cleanText(option.expiration), strike: toNum(option.strike, null), contracts: toNum(option.contracts, 1) || 1, multiplier: toNum(option.multiplier, 100) || 100, premiumPerShare: toNum(option.premiumPerShare, null), fees: toNum(option.fees, 0) || 0, collateral: toNum(option.collateral, null), status, thesis: cleanText(option.thesis), createdAt: option.createdAt || new Date().toISOString(), updatedAt: option.updatedAt || new Date().toISOString() };
+  const status = OPTION_STATUSES.includes(statusValue) ? statusValue : 'open';
+  const objective = OPTION_OBJECTIVES.includes(cleanText(option.objective)) ? cleanText(option.objective) : (cleanText(option.objective) === 'acquire' ? 'buy_lower' : base.objective);
+  return {
+    ...base, ...option,
+    id: cleanText(option.id) || base.id,
+    underlying: cleanText(option.underlying), ticker: cleanText(option.ticker).toUpperCase(), isin: normalizeIsin(option.isin) || cleanText(option.isin).toUpperCase(),
+    optionType, side, strategy: cleanText(option.strategy) || base.strategy, objective,
+    openedAt: normalizeDate(option.openedAt) || cleanText(option.openedAt) || base.openedAt,
+    expiration: normalizeDate(option.expiration) || cleanText(option.expiration),
+    strike: toNum(option.strike, null), contracts: toNum(option.contracts, 1) || 1, multiplier: toNum(option.multiplier, 100) || 100,
+    premiumPerShare: toNum(option.premiumPerShare, null), fees: toNum(option.fees, 0) || 0, collateral: toNum(option.collateral, null),
+    currency: normalizeCurrency(option.currency), fxRateToEur: toNum(option.fxRateToEur, 1) || 1,
+    underlyingPriceAtOpen: toNum(option.underlyingPriceAtOpen, null), impliedVolatility: toNum(option.impliedVolatility, null), delta: toNum(option.delta, null),
+    earningsDate: normalizeDate(option.earningsDate), exDividendDate: normalizeDate(option.exDividendDate), expectedDividendPerShare: toNum(option.expectedDividendPerShare, null),
+    sharesInPortfolio: toNum(option.sharesInPortfolio, null), avgCostBasis: toNum(option.avgCostBasis, null), sector: cleanText(option.sector), country: cleanText(option.country),
+    limitPrice: toNum(option.limitPrice, null), plannedOpenDate: normalizeDate(option.plannedOpenDate),
+    marginRequired: toNum(option.marginRequired, null), acceptsUncoveredRisk: Boolean(option.acceptsUncoveredRisk),
+    status,
+    thesis: cleanText(option.thesis), risks: cleanText(option.risks), exitPlan: cleanText(option.exitPlan), assignmentAccepted: option.assignmentAccepted !== false,
+    linkedPositionId: cleanText(option.linkedPositionId), rollFromId: cleanText(option.rollFromId), rolledToId: cleanText(option.rolledToId),
+    closedAt: normalizeDate(option.closedAt), closePremiumPerShare: toNum(option.closePremiumPerShare, null), closeFees: toNum(option.closeFees, 0) || 0, closeReason: cleanText(option.closeReason), realizedResult: toNum(option.realizedResult, null),
+    lastScore: toNum(option.lastScore, null), lastScoreBreakdown: Array.isArray(option.lastScoreBreakdown) ? option.lastScoreBreakdown : null,
+    notes: cleanText(option.notes),
+    createdAt: option.createdAt || base.createdAt, updatedAt: option.updatedAt || base.updatedAt
+  };
 }
 function optionDerived(option) {
   const contracts = option.contracts || 0;
@@ -1609,6 +1669,442 @@ function optionDerived(option) {
   const capitalCommitted = option.collateral !== null && option.collateral !== undefined ? option.collateral : (option.strike || 0) * contracts * multiplier;
   const effectiveEntry = option.optionType === 'put' && contracts * multiplier ? (option.strike || 0) - (netPremium / (contracts * multiplier)) : null;
   return { grossPremium, netPremium, capitalCommitted, effectiveEntry };
+}
+function optionDaysToExpiration(option, fromDate = new Date()) {
+  if (!option.expiration) return null;
+  return Math.ceil((new Date(`${option.expiration}T00:00:00`) - fromDate) / 86400000);
+}
+function erf(x) {
+  const sign = x < 0 ? -1 : 1;
+  x = Math.abs(x);
+  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return sign * y;
+}
+function normalCdf(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+function blackScholesItmProbability(optionType, spot, strike, days, iv, riskFreeRate = 0) {
+  if (!spot || !strike || !days || days <= 0 || !iv || iv <= 0) return null;
+  const t = days / 365;
+  const d1 = (Math.log(spot / strike) + (riskFreeRate + (iv * iv) / 2) * t) / (iv * Math.sqrt(t));
+  const d2 = d1 - iv * Math.sqrt(t);
+  return optionType === 'call' ? normalCdf(d2) : normalCdf(-d2);
+}
+function findLinkedPortfolioPosition(option) {
+  if (option.isin) { const byIsin = state.portfolio.find(position => position.isin === option.isin); if (byIsin) return byIsin; }
+  if (option.ticker) { const byTicker = state.portfolio.find(position => position.symbol === option.ticker); if (byTicker) return byTicker; }
+  return null;
+}
+function optionAssignmentSharesInfo(option) {
+  const linked = findLinkedPortfolioPosition(option);
+  if (linked) return { shares: linked.quantity || 0, avgCost: linked.averagePrice || 0, linked };
+  return { shares: toNum(option.sharesInPortfolio, 0) || 0, avgCost: toNum(option.avgCostBasis, 0) || 0, linked: null };
+}
+function computeOptionAnalysis(option) {
+  const contracts = option.contracts || 0;
+  const multiplier = option.multiplier || 100;
+  const shares = contracts * multiplier;
+  const premiumPerShare = option.premiumPerShare || 0;
+  const grossPremium = premiumPerShare * shares;
+  const netPremium = grossPremium - (option.fees || 0);
+  const netPremiumPerShare = shares ? netPremium / shares : 0;
+  const strike = option.strike || 0;
+  const spot = option.underlyingPriceAtOpen || null;
+  const days = optionDaysToExpiration(option);
+  const isPut = option.optionType === 'put';
+  const isCall = option.optionType === 'call';
+  const isSell = option.side === 'sell';
+  const isBuy = option.side === 'buy';
+  const covered = option.strategy === 'covered-call';
+  const analysis = { shares, grossPremium, netPremium, netPremiumPerShare, days };
+
+  if (spot && strike) {
+    const itm = isPut ? spot < strike : spot > strike;
+    const atm = Math.abs(spot - strike) / spot < 0.005;
+    analysis.moneyness = atm ? 'ATM' : (itm ? 'ITM' : 'OTM');
+    analysis.distanceToStrike = (spot - strike) / spot;
+  }
+
+  if (option.delta !== null && option.delta !== undefined) {
+    analysis.probability = { value: Math.min(1, Math.abs(option.delta)), method: 'delta', label: 'Aproximada a partir del delta' };
+  } else {
+    const bs = blackScholesItmProbability(option.optionType, spot, strike, days, option.impliedVolatility);
+    analysis.probability = bs === null ? null : { value: bs, method: 'black-scholes', label: 'Estimación teórica (Black-Scholes)' };
+  }
+
+  if (isPut && isSell) {
+    const capitalCommittedGross = strike * shares;
+    const capitalCommittedNet = capitalCommittedGross - netPremium;
+    const effectiveEntry = shares ? strike - netPremiumPerShare : null;
+    analysis.capitalCommittedGross = capitalCommittedGross;
+    analysis.capitalCommittedNet = capitalCommittedNet;
+    analysis.effectiveEntry = effectiveEntry;
+    analysis.breakeven = effectiveEntry;
+    if (spot) analysis.discountVsCurrent = (spot - effectiveEntry) / spot;
+    analysis.premiumReturnGross = capitalCommittedGross ? netPremium / capitalCommittedGross : null;
+    analysis.premiumReturnNet = capitalCommittedNet ? netPremium / capitalCommittedNet : null;
+    if (days && days > 0) {
+      analysis.annualizedReturnGross = analysis.premiumReturnGross === null ? null : analysis.premiumReturnGross * 365 / days;
+      analysis.annualizedReturnNet = analysis.premiumReturnNet === null ? null : analysis.premiumReturnNet * 365 / days;
+    }
+    const { shares: existingShares, avgCost } = optionAssignmentSharesInfo(option);
+    const metrics = fullMetrics();
+    const newShares = existingShares + shares;
+    const referencePrice = spot || strike;
+    const newAvgCost = newShares ? ((existingShares * avgCost) + (strike * shares)) / newShares : strike;
+    const newPositionValue = newShares * referencePrice;
+    const priorPositionValue = existingShares * referencePrice;
+    const newPortfolioValue = metrics.value - priorPositionValue + newPositionValue;
+    analysis.assignment = {
+      sharesAssignable: shares,
+      totalCost: strike * shares,
+      newShares, newAvgCost, newPositionValue,
+      newWeight: newPortfolioValue ? newPositionValue / newPortfolioValue : null,
+      priorWeight: metrics.value ? priorPositionValue / metrics.value : null,
+      liquidityConsumedPct: metrics.liquidity ? capitalCommittedGross / metrics.liquidity : null,
+      liquidityRemaining: metrics.liquidity - capitalCommittedGross
+    };
+    const { liquidityAvailable } = advisorSignals();
+    analysis.coverage = {
+      requiredLiquidity: capitalCommittedGross,
+      availableLiquidity: liquidityAvailable,
+      coveragePct: capitalCommittedGross ? Math.min(1, liquidityAvailable / capitalCommittedGross) : null,
+      deficit: Math.max(0, capitalCommittedGross - liquidityAvailable)
+    };
+  }
+
+  if (isCall && isSell && covered) {
+    const { shares: existingShares, avgCost } = optionAssignmentSharesInfo(option);
+    const coveredShares = Math.min(shares, existingShares);
+    const uncoveredShares = Math.max(0, shares - existingShares);
+    analysis.sharesCovered = shares;
+    analysis.uncoveredShares = uncoveredShares;
+    analysis.pctPositionCovered = existingShares ? Math.min(1, shares / existingShares) : null;
+    analysis.effectiveSalePrice = strike + netPremiumPerShare;
+    analysis.capitalGainPotential = (strike - avgCost) * coveredShares;
+    analysis.totalPotentialGain = analysis.capitalGainPotential + netPremium;
+    const costBasis = avgCost * coveredShares;
+    analysis.maxReturnOnCost = costBasis ? analysis.totalPotentialGain / costBasis : null;
+    analysis.annualizedPremiumReturn = (days && days > 0 && costBasis) ? (netPremium / costBasis) * 365 / days : null;
+    if (spot) analysis.upsideGivenUpPct = spot < strike ? null : (spot - strike) / spot;
+    if (option.exDividendDate && option.expiration) {
+      analysis.dividendAtRisk = option.exDividendDate <= option.expiration && (spot ? spot >= strike : false);
+    }
+    const intrinsic = spot ? Math.max(0, spot - strike) : null;
+    const timeValue = intrinsic !== null ? premiumPerShare - intrinsic : null;
+    analysis.intrinsicValue = intrinsic;
+    analysis.timeValue = timeValue;
+    analysis.earlyExerciseAlert = Boolean(analysis.dividendAtRisk && timeValue !== null && timeValue < premiumPerShare * 0.15);
+  }
+
+  if (isCall && isSell && !covered) {
+    analysis.maxLossLabel = 'Teóricamente ilimitada';
+    analysis.notionalExposure = (spot || strike) * shares;
+    const base = spot || strike;
+    analysis.stressTests = [0.1, 0.2, 0.3, 0.5].map(pct => {
+      const stressPrice = base * (1 + pct);
+      const loss = ((stressPrice - strike) * shares) - netPremium;
+      return { pct, stressPrice, loss: Math.max(loss, -netPremium) };
+    });
+  }
+
+  if (isCall && isBuy) {
+    const totalPremiumPaid = grossPremium + (option.fees || 0);
+    analysis.totalPremiumPaid = totalPremiumPaid;
+    analysis.maxLoss = totalPremiumPaid;
+    const breakevenPerShare = shares ? strike + (totalPremiumPaid / shares) : null;
+    analysis.breakeven = breakevenPerShare;
+    const intrinsic = spot ? Math.max(0, spot - strike) * shares : null;
+    analysis.intrinsicValue = intrinsic;
+    analysis.timeValue = intrinsic !== null ? totalPremiumPaid - intrinsic : null;
+    if (spot && breakevenPerShare) analysis.pctMoveNeeded = (breakevenPerShare - spot) / spot;
+    if (spot && premiumPerShare) analysis.leverageApprox = spot / premiumPerShare;
+    analysis.scenarios = buildOptionScenarios(option, analysis, 'call-buy');
+  }
+
+  if (isPut && isBuy) {
+    const totalPremiumPaid = grossPremium + (option.fees || 0);
+    analysis.totalPremiumPaid = totalPremiumPaid;
+    analysis.maxLoss = totalPremiumPaid;
+    const breakevenPerShare = shares ? strike - (totalPremiumPaid / shares) : null;
+    analysis.breakeven = breakevenPerShare;
+    const intrinsic = spot ? Math.max(0, strike - spot) * shares : null;
+    analysis.intrinsicValue = intrinsic;
+    analysis.timeValue = intrinsic !== null ? totalPremiumPaid - intrinsic : null;
+    if (spot && breakevenPerShare) analysis.pctMoveNeeded = (spot - breakevenPerShare) / spot;
+    const { shares: existingShares } = optionAssignmentSharesInfo(option);
+    const protectedShares = Math.min(existingShares, shares);
+    analysis.protectionValue = protectedShares * strike;
+    const metrics = fullMetrics();
+    analysis.pctPortfolioProtected = metrics.value ? (protectedShares * (spot || strike)) / metrics.value : null;
+    analysis.annualizedHedgeCost = (days && days > 0 && analysis.protectionValue) ? (totalPremiumPaid / analysis.protectionValue) * 365 / days : null;
+    analysis.scenarios = buildOptionScenarios(option, analysis, 'put-buy');
+  }
+
+  return analysis;
+}
+function buildOptionScenarios(option, analysis, kind) {
+  const spot = option.underlyingPriceAtOpen;
+  if (!spot) return [];
+  const shares = analysis.shares;
+  const premiumPaid = analysis.totalPremiumPaid || 0;
+  return [-0.2, -0.1, 0, 0.1, 0.2].map(pct => {
+    const price = spot * (1 + pct);
+    const pnl = kind === 'call-buy'
+      ? (Math.max(0, price - option.strike) * shares) - premiumPaid
+      : (Math.max(0, option.strike - price) * shares) - premiumPaid;
+    return { pct, price, pnl };
+  });
+}
+function optionPayoffAtPrice(option, price) {
+  const shares = (option.contracts || 0) * (option.multiplier || 100);
+  const strike = option.strike || 0;
+  const grossPremium = (option.premiumPerShare || 0) * shares;
+  const fees = option.fees || 0;
+  if (option.optionType === 'put' && option.side === 'sell') return (grossPremium - fees) - (Math.max(0, strike - price) * shares);
+  if (option.optionType === 'put' && option.side === 'buy') return (Math.max(0, strike - price) * shares) - (grossPremium + fees);
+  if (option.optionType === 'call' && option.side === 'sell') return (grossPremium - fees) - (Math.max(0, price - strike) * shares);
+  if (option.optionType === 'call' && option.side === 'buy') return (Math.max(0, price - strike) * shares) - (grossPremium + fees);
+  return 0;
+}
+function buildOptionPayoffChart(option, analysis) {
+  const spot = option.underlyingPriceAtOpen;
+  const strike = option.strike || 0;
+  const center = spot || strike;
+  if (!center) return '<div class="empty-state">Introduce el precio actual o el strike para ver el payoff.</div>';
+  const spread = Math.max(center * 0.35, 1);
+  const minPrice = Math.max(0, center - spread);
+  const maxPrice = center + spread;
+  const steps = 60;
+  const series = [];
+  for (let i = 0; i <= steps; i += 1) {
+    const price = minPrice + ((maxPrice - minPrice) * i / steps);
+    series.push({ price, pnl: optionPayoffAtPrice(option, price) });
+  }
+  const pnlValues = series.map(item => item.pnl);
+  const minPnl = Math.min(...pnlValues, 0);
+  const maxPnl = Math.max(...pnlValues, 0);
+  const width = 640, height = 240, padding = 26;
+  const xScale = price => padding + ((price - minPrice) / ((maxPrice - minPrice) || 1)) * (width - padding * 2);
+  const yRange = (maxPnl - minPnl) || 1;
+  const yScale = pnl => height - padding - ((pnl - minPnl) / yRange) * (height - padding * 2);
+  const linePoints = series.map(item => `${xScale(item.price).toFixed(1)},${yScale(item.pnl).toFixed(1)}`).join(' ');
+  const zeroY = yScale(0).toFixed(1);
+  const markers = [`<line x1="${padding}" y1="${zeroY}" x2="${width - padding}" y2="${zeroY}" class="chart-grid-line"></line>`];
+  if (spot) markers.push(`<line x1="${xScale(spot).toFixed(1)}" y1="${padding}" x2="${xScale(spot).toFixed(1)}" y2="${height - padding}" stroke="var(--muted)" stroke-dasharray="4 3"></line>`);
+  if (strike) markers.push(`<line x1="${xScale(strike).toFixed(1)}" y1="${padding}" x2="${xScale(strike).toFixed(1)}" y2="${height - padding}" stroke="var(--orange)" stroke-dasharray="2 2"></line>`);
+  if (analysis.breakeven !== undefined && analysis.breakeven !== null && analysis.breakeven > 0) markers.push(`<circle cx="${xScale(analysis.breakeven).toFixed(1)}" cy="${zeroY}" r="4" fill="var(--slate-deep)"></circle>`);
+  return `<div class="chart-shell"><div class="chart-stage"><svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Payoff de la operación">${markers.join('')}<polyline class="chart-line" stroke="var(--chart-portfolio)" points="${linePoints}"></polyline></svg></div><div class="chart-axis"><span>${eur.format(minPrice)}</span><span>Actual/Strike</span><span>${eur.format(maxPrice)}</span></div></div>`;
+}
+function computeOptionScore(option, analysis) {
+  const components = [];
+  let liquidezScore = 5;
+  if (analysis.coverage) liquidezScore = analysis.coverage.coveragePct === null ? 5 : Math.round(Math.min(1, analysis.coverage.coveragePct) * 10);
+  components.push({ id: 'liquidez', label: 'Liquidez suficiente', score: liquidezScore, weight: 20 });
+
+  let margenScore = 5;
+  if (analysis.discountVsCurrent !== undefined && analysis.discountVsCurrent !== null) margenScore = Math.max(0, Math.min(10, Math.round(analysis.discountVsCurrent * 100)));
+  else if (analysis.distanceToStrike !== undefined && analysis.distanceToStrike !== null) margenScore = Math.max(0, Math.min(10, Math.round(Math.abs(analysis.distanceToStrike) * 50)));
+  components.push({ id: 'margen', label: 'Margen de seguridad', score: margenScore, weight: 15 });
+
+  let concentracionScore = 7;
+  if (analysis.assignment && analysis.assignment.newWeight !== null && analysis.assignment.newWeight !== undefined) {
+    const weight = analysis.assignment.newWeight;
+    concentracionScore = weight < 0.1 ? 10 : weight < 0.15 ? 7 : weight < 0.22 ? 4 : 1;
+  }
+  components.push({ id: 'concentracion', label: 'Concentración potencial', score: concentracionScore, weight: 15 });
+
+  const linked = findLinkedPortfolioPosition(option);
+  components.push({ id: 'coherencia', label: 'Coherencia con cartera', score: linked ? 9 : (option.objective === 'income' ? 6 : 5), weight: 10 });
+
+  let rentabilidadScore = 5;
+  const annualized = analysis.annualizedReturnNet ?? analysis.annualizedPremiumReturn;
+  if (annualized !== undefined && annualized !== null) rentabilidadScore = Math.max(0, Math.min(10, Math.round(annualized * 20)));
+  components.push({ id: 'rentabilidad', label: 'Rentabilidad de la prima', score: rentabilidadScore, weight: 15 });
+
+  let riesgoEventoScore = 8;
+  if (option.earningsDate && option.expiration && option.earningsDate <= option.expiration) riesgoEventoScore = 3;
+  components.push({ id: 'evento', label: 'Riesgo de evento (resultados)', score: riesgoEventoScore, weight: 10 });
+
+  components.push({ id: 'tesis', label: 'Tesis registrada', score: option.thesis ? 10 : 2, weight: 8 });
+  components.push({ id: 'salida', label: 'Plan de salida definido', score: option.exitPlan ? 10 : 3, weight: 7 });
+
+  const totalWeight = components.reduce((sum, item) => sum + item.weight, 0);
+  const total = Math.round(components.reduce((sum, item) => sum + (item.score / 10) * item.weight, 0) / totalWeight * 100);
+  return { total, components };
+}
+function optionRiskTrafficLight(option, analysis) {
+  const reasons = [];
+  let tone = 'good';
+  const isUncoveredCall = option.optionType === 'call' && option.side === 'sell' && option.strategy !== 'covered-call';
+  if (isUncoveredCall) {
+    if (!option.acceptsUncoveredRisk) { tone = 'risk'; reasons.push('Call vendida sin cobertura: riesgo teóricamente ilimitado sin aceptación explícita.'); }
+    else { tone = 'risk'; reasons.push('Riesgo teóricamente ilimitado asumido explícitamente.'); }
+  }
+  if (analysis.coverage && analysis.coverage.deficit > 0) { tone = 'risk'; reasons.push(`Faltan ${eur.format(analysis.coverage.deficit)} de liquidez para cubrir una asignación.`); }
+  if (analysis.uncoveredShares > 0) { tone = 'risk'; reasons.push(`Solo tienes acciones para cubrir parte del contrato: ${analysis.uncoveredShares} acciones quedarían al descubierto.`); }
+  if (analysis.assignment && analysis.assignment.newWeight !== null && analysis.assignment.newWeight > 0.22) { if (tone !== 'risk') tone = 'warn'; reasons.push('La asignación dejaría una concentración excesiva en esta empresa.'); }
+  if (!option.thesis) { if (tone !== 'risk') tone = 'warn'; reasons.push('La operación no tiene tesis registrada.'); }
+  if (!option.exitPlan) { if (tone !== 'risk') tone = 'warn'; reasons.push('No hay plan de salida definido.'); }
+  if (option.earningsDate && option.expiration && option.earningsDate <= option.expiration) { if (tone !== 'risk') tone = 'warn'; reasons.push('Hay resultados empresariales antes del vencimiento.'); }
+  if (analysis.earlyExerciseAlert) { tone = 'warn'; reasons.push('Riesgo de ejercicio anticipado por dividendo próximo.'); }
+  if (!reasons.length) reasons.push('Sin alertas relevantes con los datos disponibles.');
+  return { tone, reasons };
+}
+function optionRecommendationText(option, analysis, score, trafficLight) {
+  const lines = [];
+  const underlyingLabel = option.underlying || option.ticker || 'el subyacente';
+  if (option.optionType === 'put' && option.side === 'sell') {
+    const returnLabel = analysis.premiumReturnGross !== null && analysis.premiumReturnGross !== undefined ? formatPercent(analysis.premiumReturnGross) : 'no calculable';
+    const discountLabel = analysis.discountVsCurrent !== null && analysis.discountVsCurrent !== undefined ? `${formatPercent(Math.abs(analysis.discountVsCurrent))} ${analysis.discountVsCurrent >= 0 ? 'inferior' : 'superior'} al precio actual` : 'sin precio actual introducido';
+    lines.push(`La put vendida sobre ${underlyingLabel} tiene una rentabilidad de prima del ${returnLabel} y un precio efectivo de entrada ${discountLabel}.`);
+    if (analysis.assignment) lines.push(`Si se asigna, consumiría ${analysis.assignment.liquidityConsumedPct !== null ? formatPercent(analysis.assignment.liquidityConsumedPct) : 'una parte no calculable'} de la liquidez disponible${analysis.assignment.newWeight !== null ? ` y elevaría el peso de la posición al ${formatPercent(analysis.assignment.newWeight)}` : ''}.`);
+  } else if (option.optionType === 'call' && option.side === 'sell' && option.strategy === 'covered-call') {
+    lines.push(`La covered call sobre ${underlyingLabel} da un precio efectivo de venta de ${analysis.effectiveSalePrice !== undefined ? eur.format(analysis.effectiveSalePrice) : '-'} si se ejerce, cediendo la revalorización por encima del strike a cambio de la prima.`);
+  } else if (option.optionType === 'call' && option.side === 'sell') {
+    lines.push('Esta call vendida sin cobertura tiene pérdida potencial ilimitada; solo es defendible si aceptas expresamente ese riesgo y dispones de margen suficiente.');
+  } else if (option.side === 'buy') {
+    lines.push(`Esta compra de ${option.optionType === 'call' ? 'call' : 'put'} arriesga como máximo la prima pagada (${eur.format(analysis.totalPremiumPaid || 0)}) y necesita un movimiento del ${analysis.pctMoveNeeded !== undefined && analysis.pctMoveNeeded !== null ? formatPercent(Math.abs(analysis.pctMoveNeeded)) : 'no calculable'} para alcanzar el breakeven.`);
+  }
+  lines.push(`Puntuación interna: ${score.total}/100. Semáforo: ${trafficLight.tone === 'good' ? 'verde' : trafficLight.tone === 'warn' ? 'amarillo' : 'rojo'}.`);
+  lines.push('Esto no es una recomendación de compra o venta: la operación solo es coherente si encaja con tu tesis y tu tolerancia real de liquidez y concentración.');
+  return lines;
+}
+let comparatorRows = [];
+let lastAnalyzerOption = null;
+let lastAnalyzerResult = null;
+function readAnalyzerForm() {
+  return migrateOptionPosition({
+    underlying: cleanText($('#anUnderlying')?.value),
+    ticker: cleanText($('#anTicker')?.value),
+    isin: cleanText($('#anIsin')?.value),
+    sector: cleanText($('#anSector')?.value),
+    country: cleanText($('#anCountry')?.value),
+    underlyingPriceAtOpen: parseLocaleNumber($('#anUnderlyingPrice')?.value),
+    currency: $('#anCurrency')?.value || 'EUR',
+    fxRateToEur: parseLocaleNumber($('#anFxRate')?.value) || 1,
+    impliedVolatility: parseLocaleNumber($('#anImpliedVol')?.value),
+    earningsDate: $('#anEarningsDate')?.value || '',
+    exDividendDate: $('#anExDivDate')?.value || '',
+    expectedDividendPerShare: parseLocaleNumber($('#anExpectedDividend')?.value),
+    sharesInPortfolio: parseLocaleNumber($('#anSharesOwned')?.value),
+    avgCostBasis: parseLocaleNumber($('#anAvgCost')?.value),
+    optionType: $('#anOptionType')?.value || 'put',
+    side: $('#anSide')?.value || 'sell',
+    strategy: $('#anStrategy')?.value || 'cash-secured-put',
+    strike: parseLocaleNumber($('#anStrike')?.value),
+    expiration: $('#anExpiration')?.value || '',
+    openedAt: $('#anOpenedAt')?.value || new Date().toISOString().slice(0, 10),
+    premiumPerShare: parseLocaleNumber($('#anPremiumPerShare')?.value),
+    contracts: Number($('#anContracts')?.value || 1),
+    multiplier: Number($('#anMultiplier')?.value || 100),
+    fees: parseLocaleNumber($('#anFees')?.value) || 0,
+    collateral: parseLocaleNumber($('#anCollateral')?.value),
+    limitPrice: parseLocaleNumber($('#anLimitPrice')?.value),
+    delta: parseLocaleNumber($('#anDelta')?.value),
+    marginRequired: parseLocaleNumber($('#anMarginRequired')?.value),
+    acceptsUncoveredRisk: Boolean($('#anAcceptsUncoveredRisk')?.checked),
+    objective: $('#anObjective')?.value || 'income',
+    assignmentAccepted: $('#anAssignmentAccepted') ? Boolean($('#anAssignmentAccepted').checked) : true,
+    thesis: cleanText($('#anThesis')?.value),
+    risks: cleanText($('#anRisks')?.value),
+    exitPlan: cleanText($('#anExitPlan')?.value),
+    status: 'proposal'
+  });
+}
+function updateAnalyzerLinkedInfo() {
+  const infoNode = $('#anLinkedInfo');
+  if (!infoNode) return;
+  const linked = findLinkedPortfolioPosition({ isin: normalizeIsin($('#anIsin')?.value), ticker: cleanText($('#anTicker')?.value).toUpperCase() });
+  infoNode.textContent = linked ? `Detectado en cartera: ${num.format(linked.quantity || 0)} acciones a precio medio ${formatCurrency(linked.averagePrice, linked.currency)}.` : 'No se ha detectado una posición existente con ese ISIN o ticker. Usa los campos manuales si ya tienes acciones.';
+}
+function renderAnalyzerResults(option) {
+  const analysis = computeOptionAnalysis(option);
+  const score = computeOptionScore(option, analysis);
+  const trafficLight = optionRiskTrafficLight(option, analysis);
+  const recommendation = optionRecommendationText(option, analysis, score, trafficLight);
+  lastAnalyzerOption = option;
+  lastAnalyzerResult = { analysis, score, trafficLight };
+
+  const card = $('#anResultsCard');
+  card.hidden = false;
+  $('#anResultsSubtitle').textContent = `${option.optionType === 'put' ? 'Put' : 'Call'} ${option.side === 'sell' ? 'vendida' : 'comprada'} sobre ${option.underlying || option.ticker || 'el subyacente'} | Estrategia: ${option.strategy}`;
+
+  const items = [];
+  items.push(['Prima neta', eur.format(analysis.netPremium)]);
+  if (analysis.breakeven !== undefined && analysis.breakeven !== null) items.push(['Breakeven', eur.format(analysis.breakeven)]);
+  if (analysis.capitalCommittedGross !== undefined) items.push(['Capital comprometido', eur.format(analysis.capitalCommittedGross)]);
+  if (analysis.capitalCommittedNet !== undefined) items.push(['Capital neto', eur.format(analysis.capitalCommittedNet)]);
+  if (analysis.discountVsCurrent !== undefined && analysis.discountVsCurrent !== null) items.push(['Descuento vs. actual', formatPercent(analysis.discountVsCurrent)]);
+  if (analysis.premiumReturnGross !== undefined && analysis.premiumReturnGross !== null) items.push(['Rentabilidad prima', formatPercent(analysis.premiumReturnGross)]);
+  if (analysis.annualizedReturnGross !== undefined && analysis.annualizedReturnGross !== null) items.push(['Anualizada', formatPercent(analysis.annualizedReturnGross)]);
+  if (analysis.totalPremiumPaid !== undefined) items.push(['Prima pagada', eur.format(analysis.totalPremiumPaid)]);
+  if (analysis.maxLoss !== undefined) items.push(['Pérdida máxima', eur.format(analysis.maxLoss)]);
+  if (analysis.maxLossLabel) items.push(['Pérdida máxima', analysis.maxLossLabel]);
+  if (analysis.effectiveSalePrice !== undefined) items.push(['Precio venta efectivo', eur.format(analysis.effectiveSalePrice)]);
+  if (analysis.totalPotentialGain !== undefined) items.push(['Ganancia potencial total', eur.format(analysis.totalPotentialGain)]);
+  if (analysis.protectionValue !== undefined) items.push(['Valor protegido', eur.format(analysis.protectionValue)]);
+  if (analysis.days !== null && analysis.days !== undefined) items.push(['Días a vencimiento', String(analysis.days)]);
+  if (analysis.moneyness) items.push(['Moneyness', analysis.moneyness]);
+  $('#anResultsSummary').innerHTML = items.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`).join('');
+
+  const probNode = $('#anProbability');
+  probNode.innerHTML = analysis.probability
+    ? `<small>Probabilidad aproximada de terminar ITM: <strong>${formatPercent(analysis.probability.value)}</strong> (${escapeHtml(analysis.probability.label)}). No es una probabilidad garantizada.</small>`
+    : '<small>Introduce delta, o precio actual + volatilidad implícita + vencimiento, para estimar una probabilidad.</small>';
+
+  const chartNode = $('#anPayoffChart');
+  chartNode.className = 'history-chart';
+  chartNode.innerHTML = buildOptionPayoffChart(option, analysis);
+
+  $('#anScoreTotal').textContent = String(score.total);
+  $('#anScoreBreakdown').innerHTML = score.components.map(item => `<div class="score-row"><span class="score-label">${escapeHtml(item.label)}</span><span class="score-bar"><span style="width:${item.score * 10}%"></span></span><span class="score-value">${item.score}/10</span></div>`).join('');
+
+  $('#anTrafficLight').innerHTML = `<div class="signal-row signal-${trafficLight.tone}"><strong>${trafficLight.tone === 'good' ? 'Verde' : trafficLight.tone === 'warn' ? 'Amarillo' : 'Rojo'}</strong><span>${trafficLight.reasons.map(escapeHtml).join(' · ')}</span></div>`;
+  $('#anRecommendation').innerHTML = recommendation.map(line => `<small>${escapeHtml(line)}</small>`).join('');
+}
+function saveAnalyzerAsOption(status) {
+  if (!lastAnalyzerOption) { showNotice('Analiza la operación antes de guardarla.'); return; }
+  const option = migrateOptionPosition({ ...lastAnalyzerOption, status, lastScore: lastAnalyzerResult?.score?.total ?? null, lastScoreBreakdown: lastAnalyzerResult?.score?.components ?? null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  state.options.unshift(option);
+  saveState();
+  render();
+  showNotice(status === 'proposal' ? 'Propuesta guardada.' : 'Operación registrada como abierta.');
+  if (status !== 'proposal') switchOptionsSubview('optionsOpenPositions');
+}
+function addComparatorRow() {
+  comparatorRows.push({ id: `cmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, strike: null, premium: null, expiration: '' });
+  renderComparator();
+}
+function renderComparator() {
+  const tbody = $('#comparatorRows');
+  if (!tbody) return;
+  if (!comparatorRows.length) { tbody.innerHTML = '<tr><td colspan="10" class="empty-cell">Añade filas para comparar strikes.</td></tr>'; return; }
+  const base = readAnalyzerForm();
+  const sortMode = $('#comparatorSort')?.value || '';
+  const computed = comparatorRows.map(row => {
+    const option = migrateOptionPosition({ ...base, strike: row.strike, premiumPerShare: row.premium, expiration: row.expiration || base.expiration, status: 'proposal' });
+    return { row, analysis: computeOptionAnalysis(option) };
+  });
+  const sorted = [...computed].sort((a, b) => {
+    if (sortMode === 'discount') return (b.analysis.discountVsCurrent ?? -Infinity) - (a.analysis.discountVsCurrent ?? -Infinity);
+    if (sortMode === 'premium') return (b.analysis.netPremium ?? -Infinity) - (a.analysis.netPremium ?? -Infinity);
+    if (sortMode === 'return') return (b.analysis.premiumReturnGross ?? -Infinity) - (a.analysis.premiumReturnGross ?? -Infinity);
+    if (sortMode === 'probability') return (a.analysis.probability?.value ?? Infinity) - (b.analysis.probability?.value ?? Infinity);
+    return 0;
+  });
+  tbody.innerHTML = sorted.map(({ row, analysis }) => `<tr>
+    <td><input type="text" inputmode="decimal" data-cmp-field="strike" data-cmp-id="${row.id}" value="${row.strike ?? ''}"></td>
+    <td><input type="text" inputmode="decimal" data-cmp-field="premium" data-cmp-id="${row.id}" value="${row.premium ?? ''}"></td>
+    <td><input type="date" data-cmp-field="expiration" data-cmp-id="${row.id}" value="${row.expiration || ''}"></td>
+    <td>${analysis.breakeven !== undefined && analysis.breakeven !== null ? eur.format(analysis.breakeven) : '-'}</td>
+    <td>${analysis.discountVsCurrent !== undefined && analysis.discountVsCurrent !== null ? formatPercent(analysis.discountVsCurrent) : '-'}</td>
+    <td>${analysis.premiumReturnGross !== undefined && analysis.premiumReturnGross !== null ? formatPercent(analysis.premiumReturnGross) : '-'}</td>
+    <td>${analysis.annualizedReturnGross !== undefined && analysis.annualizedReturnGross !== null ? formatPercent(analysis.annualizedReturnGross) : '-'}</td>
+    <td>${analysis.capitalCommittedGross !== undefined ? eur.format(analysis.capitalCommittedGross) : '-'}</td>
+    <td>${analysis.probability ? formatPercent(analysis.probability.value) : '-'}</td>
+    <td><wa-button size="small" appearance="plain" data-cmp-remove="${row.id}"><wa-icon name="trash"></wa-icon></wa-button></td>
+  </tr>`).join('');
 }
 function optionsSummary() {
   const open = state.options.filter(option => ['open', 'rolled'].includes(option.status));
@@ -1730,9 +2226,27 @@ function advisorSignals() {
     { id: 'country', title: 'Concentración país', name: concentration[1]?.name || 'Sin dato', detail: concentration[1] ? `${formatPercent(concentration[1].weight)} de la cartera.` : 'Sin datos.', tone: concentration[1]?.tone || 'warn' },
     { id: 'sector', title: 'Concentración sector', name: concentration[2]?.name || 'Sin dato', detail: concentration[2] ? `${formatPercent(concentration[2].weight)} de la cartera.` : 'Sin datos.', tone: concentration[2]?.tone || 'warn' },
     { id: 'dividends', title: 'Sostenibilidad del dividendo', name: dividendTrend.growth12m === null ? eur.format(dividendTrend.latest) : formatPercent(dividendTrend.growth12m), detail: dividendTrend.growth12m === null ? 'Faltan cierres para medir el crecimiento interanual.' : 'Crecimiento del dividendo frente a 12 meses.', tone: dividendTrend.growth12m === null ? 'warn' : dividendTrend.growth12m > 0.05 ? 'good' : dividendTrend.growth12m > 0 ? 'warn' : 'risk' },
-    { id: 'options', title: 'Opciones', name: eur.format(options.totalCollateral), detail: metrics.liquidity ? `${formatPercent(committedLiquidityRatio)} de la liquidez comprometida en garantías.` : 'Sin liquidez registrada.', tone: committedLiquidityRatio < 0.25 ? 'good' : committedLiquidityRatio < 0.45 ? 'warn' : 'risk' }
+    { id: 'options', title: 'Opciones', name: eur.format(options.totalCollateral), detail: metrics.liquidity ? `${formatPercent(committedLiquidityRatio)} de la liquidez comprometida en garantías.` : 'Sin liquidez registrada.', tone: committedLiquidityRatio < 0.25 ? 'good' : committedLiquidityRatio < 0.45 ? 'warn' : 'risk' },
+    ...optionAlertSignal(options)
   ];
   return { signals, liquidityAvailable, requiredLiquidity, debtRatio, options, dividendTrend };
+}
+function optionAlertSignal(options = optionsSummary()) {
+  const open = options.open || [];
+  if (!open.length) return [];
+  const alerts = [];
+  open.forEach(option => {
+    const spot = option.underlyingPriceAtOpen;
+    const strike = option.strike || 0;
+    const itm = spot && strike ? (option.optionType === 'put' ? spot < strike : spot > strike) : false;
+    if (itm) alerts.push(`${option.underlying || option.ticker} está ITM`);
+    if (!option.thesis) alerts.push(`${option.underlying || option.ticker} sin tesis`);
+    if (!option.exitPlan) alerts.push(`${option.underlying || option.ticker} sin plan de salida`);
+    const days = optionDaysToExpiration(option);
+    if (days !== null && days <= 7) alerts.push(`${option.underlying || option.ticker} vence en ${days} días`);
+  });
+  if (!alerts.length) return [{ id: 'options-alerts', title: 'Alertas de opciones', name: 'Sin alertas', detail: `${open.length} posiciones abiertas sin incidencias relevantes.`, tone: 'good' }];
+  return [{ id: 'options-alerts', title: 'Alertas de opciones', name: `${alerts.length} alertas`, detail: alerts.slice(0, 4).join(' · '), tone: alerts.length > 2 ? 'risk' : 'warn' }];
 }
 function executiveVerdict(recommendations) {
   const score = portfolioScore();
@@ -1762,43 +2276,6 @@ function executiveDiagnosis(recommendations) {
   if (recommendations.some(item => item.id === 'top-position-freeze')) lines.push('La cartera mantiene una concentración relevante en algunas posiciones, por lo que conviene evitar ampliar las más pesadas.');
   lines.push(`El patrimonio neto estimado es de ${eur.format(metrics.netWorth)} y los dividendos anuales de ${eur.format(metrics.dividends)}; la prioridad no es maximizar yield, sino preservar flexibilidad y calidad de decisiones.`);
   return lines;
-}
-function addOptionPosition(event) {
-  event.preventDefault();
-  const underlying = $('#optionUnderlying').value.trim();
-  const strike = parseLocaleNumber($('#optionStrike').value);
-  const premiumPerShare = parseLocaleNumber($('#optionPremiumPerShare').value);
-  if (!underlying || strike === null || premiumPerShare === null) { showNotice('Completa al menos subyacente, strike y prima por acción.'); return; }
-  state.options.unshift(migrateOptionPosition({
-    ...defaultOptionPosition(),
-    underlying,
-    ticker: $('#optionTicker').value.trim(),
-    isin: $('#optionIsin').value.trim(),
-    optionType: $('#optionType').value || 'put',
-    strategy: $('#optionStrategy').value || 'cash-secured-put',
-    objective: $('#optionObjective').value || 'acquire',
-    openedAt: $('#optionOpenedAt').value || new Date().toISOString().slice(0, 10),
-    expiration: $('#optionExpiration').value || '',
-    strike,
-    contracts: Number($('#optionContracts').value || 1),
-    multiplier: Number($('#optionMultiplier').value || 100),
-    premiumPerShare,
-    fees: parseLocaleNumber($('#optionFees').value) || 0,
-    collateral: parseLocaleNumber($('#optionCollateral').value),
-    status: $('#optionStatus').value || 'open',
-    thesis: $('#optionThesis').value.trim(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  }));
-  saveState();
-  renderOptionsModule();
-  renderAdvisorCenter();
-  $('#optionForm').reset();
-  $('#optionType').value = 'put';
-  $('#optionStrategy').value = 'cash-secured-put';
-  $('#optionObjective').value = 'acquire';
-  $('#optionStatus').value = 'open';
-  showNotice('Operación de opciones registrada.');
 }
 function updateAdvisorSettings() {
   ensureAdvisoryState();
@@ -1863,6 +2340,9 @@ function render() {
   renderPortfolio();
   renderTransactions();
   renderOptionsModule();
+  renderOptionHistory();
+  renderOptionsCalendar();
+  renderOptionsStats();
   renderHistory();
   renderPlan();
   renderFilters();
@@ -1875,9 +2355,32 @@ function render() {
   renderSortableHeaders();
 }
 ensureAdvisoryState();
-$('#optionForm')?.addEventListener('submit', addOptionPosition);
 ['#advisorMinLiquidity', '#advisorUpcomingDebt', '#advisorUpcomingDebtMonths', '#advisorSavingsCapacity', '#advisorEmergencyFund'].forEach(selector => {
   $(selector)?.addEventListener('change', updateAdvisorSettings);
+});
+$('#anAnalyzeBtn')?.addEventListener('click', () => {
+  const option = readAnalyzerForm();
+  if (!option.underlying && !option.ticker) { showNotice('Indica al menos el subyacente o el ticker.'); return; }
+  if (option.strike === null || option.premiumPerShare === null) { showNotice('Indica al menos el strike y la prima por acción.'); return; }
+  if (!option.expiration) { showNotice('Indica la fecha de vencimiento.'); return; }
+  renderAnalyzerResults(option);
+});
+['#anTicker', '#anIsin'].forEach(selector => $(selector)?.addEventListener('change', updateAnalyzerLinkedInfo));
+$('#anSaveProposalBtn')?.addEventListener('click', () => saveAnalyzerAsOption('proposal'));
+$('#anSaveOpenBtn')?.addEventListener('click', () => saveAnalyzerAsOption('open'));
+$('#comparatorAddRowBtn')?.addEventListener('click', addComparatorRow);
+$('#comparatorSort')?.addEventListener('change', renderComparator);
+document.addEventListener('click', event => {
+  const removeBtn = event.target.closest('[data-cmp-remove]');
+  if (removeBtn) { comparatorRows = comparatorRows.filter(row => row.id !== removeBtn.dataset.cmpRemove); renderComparator(); }
+});
+document.addEventListener('change', event => {
+  const field = event.target.closest('[data-cmp-field]');
+  if (!field) return;
+  const row = comparatorRows.find(item => item.id === field.dataset.cmpId);
+  if (!row) return;
+  row[field.dataset.cmpField] = field.dataset.cmpField === 'expiration' ? field.value : parseLocaleNumber(field.value);
+  renderComparator();
 });
 document.addEventListener('click', event => {
   const recButton = event.target.closest('[data-rec-action]');
@@ -1921,11 +2424,292 @@ function decisionReviewsRows() { return sortRows((state.decisionReviews || []).m
 function dueReviewCount() { const today = new Date().toISOString().slice(0, 10); return decisionReviewsRows().filter(item => item.reviewDate && item.reviewDate <= today && ['pending', 'reviewing'].includes(item.status)).length; }
 function buildRecommendations() { const { signals, liquidityAvailable, requiredLiquidity, debtRatio, options, dividendTrend } = advisorSignals(); const topPositions = sortedPortfolio().slice(0, 5); const generated = []; if (liquidityAvailable < requiredLiquidity) generated.push({ id: 'liq-buffer', kind: 'alert', title: 'Reforzar la reserva de liquidez antes de nuevas compras', category: 'Liquidez', action: 'Reducir temporalmente la inversión y reservar caja hasta recuperar el umbral prudente.', urgency: 'Alta', explanation: 'La liquidez disponible tras descontar garantías queda por debajo del objetivo dinámico.', justification: `${eur.format(liquidityAvailable)} disponibles frente a un objetivo de ${eur.format(requiredLiquidity)}.`, impact: 'Alto', risk: 'Alto', horizon: '1-3 meses', reviewDate: new Date(Date.now() + 30 * 86400000).toISOString() }); if (state.advisor.upcomingDebt > 0 && state.advisor.upcomingDebtMonths <= 12) generated.push({ id: 'mortgage-priority', kind: 'estimate', title: 'Priorizar liquidez y capacidad de ahorro antes de formalizar la hipoteca', category: 'Deuda futura', action: 'Fijar un objetivo de caja previo a la firma y revisar aportaciones mensuales hasta alcanzarlo.', urgency: state.advisor.upcomingDebtMonths <= 6 ? 'Alta' : 'Media', explanation: 'La nueva deuda futura cambia el nivel prudente de caja y la tolerancia al riesgo.', justification: `Hipoteca o deuda prevista de ${eur.format(state.advisor.upcomingDebt)} en ${state.advisor.upcomingDebtMonths} meses.`, impact: 'Alto', risk: 'Alto', horizon: 'Hasta formalización', reviewDate: new Date(Date.now() + 45 * 86400000).toISOString() }); if (signals.find(item => item.id === 'company')?.tone === 'risk') generated.push({ id: 'top-position-freeze', kind: 'alert', title: 'Evitar ampliar las mayores posiciones hasta rebajar la concentración', category: 'Concentración', action: 'Congelar compras en las posiciones principales y dirigir nuevas entradas a zonas menos representadas.', urgency: 'Alta', explanation: 'La posición principal ya pesa demasiado dentro de la cartera.', justification: topPositions[0] ? `${topPositions[0].name} pesa ${formatPercent(topPositions[0].allocation || 0)}.` : 'Sin posición principal disponible.', impact: 'Alto', risk: 'Alto', horizon: '3 meses', reviewDate: new Date(Date.now() + 90 * 86400000).toISOString() }); if (signals.find(item => item.id === 'country')?.tone !== 'good') generated.push({ id: 'international-balance', kind: 'recommendation', title: 'Dirigir nuevas aportaciones a países o sectores infraponderados', category: 'Asignación', action: 'Priorizar las próximas compras fuera del sesgo geográfico dominante.', urgency: 'Media', explanation: 'La cartera puede diversificarse mejor sin necesidad de vender posiciones existentes.', justification: `La mayor exposición geográfica sigue concentrada en ${signals.find(item => item.id === 'country')?.name || 'una zona dominante'}.`, impact: 'Medio', risk: 'Medio', horizon: '3-6 meses', reviewDate: new Date(Date.now() + 120 * 86400000).toISOString() }); if (options.totalCollateral > 0) generated.push({ id: 'options-cash-check', kind: 'alert', title: 'Revisar si todas las puts abiertas serían asumibles si se asignaran hoy', category: 'Opciones', action: 'Simular asignación simultánea y reservar caja real para no depender de ventas forzadas.', urgency: options.expiringSoon.length ? 'Alta' : 'Media', explanation: 'Las opciones abiertas consumen liquidez real y pueden aumentar la concentración de forma brusca.', justification: `${eur.format(options.totalCollateral)} comprometidos y ${options.expiringSoon.length} vencimientos próximos.`, impact: 'Alto', risk: 'Alto', horizon: 'Inmediato', reviewDate: new Date(Date.now() + 21 * 86400000).toISOString() }); if (dividendTrend.growth12m !== null && dividendTrend.growth12m <= 0) generated.push({ id: 'dividend-review', kind: 'estimate', title: 'Revisar si el crecimiento del dividendo se ha estancado frente al último año', category: 'Dividendos', action: 'Analizar si el frenazo viene de recortes, divisa, rotación o exceso de concentración en pagadores maduros.', urgency: 'Media', explanation: 'La renta recurrente no está mejorando al ritmo esperado.', justification: `Crecimiento interanual estimado: ${formatPercent(dividendTrend.growth12m)}.`, impact: 'Medio', risk: 'Medio', horizon: '1-2 meses', reviewDate: new Date(Date.now() + 60 * 86400000).toISOString() }); if (debtRatio > 0.5) generated.push({ id: 'leverage-discipline', kind: 'alert', title: 'Reducir el ritmo de riesgo hasta estabilizar la deuda total', category: 'Riesgo financiero', action: 'Aplazar decisiones de riesgo incremental hasta aclarar el mapa de deuda y caja futura.', urgency: 'Alta', explanation: 'La deuda total prevista pesa demasiado sobre el patrimonio consolidado.', justification: `Ratio estimado de deuda ampliada: ${num.format(debtRatio * 100)} %.`, impact: 'Alto', risk: 'Alto', horizon: '6-12 meses', reviewDate: new Date(Date.now() + 120 * 86400000).toISOString() }); if (dueReviewCount() > 0) generated.push({ id: 'review-pending', kind: 'fact', title: 'Revisar decisiones pasadas ya vencidas', category: 'Aprendizaje', action: 'Cerrar las revisiones pendientes para saber que decisiones mejoraron realmente tu situación.', urgency: 'Media', explanation: 'Hay decisiones con fecha de revisión ya alcanzada.', justification: `${dueReviewCount()} revisiones ya deberían haberse evaluado.`, impact: 'Medio', risk: 'Medio', horizon: 'Este mes', reviewDate: new Date().toISOString() }); const existingById = new Map((state.recommendations || []).map(item => [item.id, item])); const ranked = [...generated].sort((a, b) => (urgencyRank(a.urgency) - urgencyRank(b.urgency)) || ((RECOMMENDATION_PRIORITY_WEIGHTS[a.id] || 99) - (RECOMMENDATION_PRIORITY_WEIGHTS[b.id] || 99))); return ranked.slice(0, 6).map(item => { const existing = existingById.get(item.id); return migrateRecommendation({ ...item, status: existing?.status || 'pending', reason: existing?.reason || '', createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: existing?.decidedAt || null }); }); }
 function renderAdvisorCenter() { ensureAdvisoryState(); const recommendationRows = $('#recommendationRows'); const decisionRows = $('#decisionRows'); const diagnosis = $('#advisorDiagnosis'); const priorities = $('#advisorPriorities'); const signalsNode = $('#advisorSignals'); const optionsSummaryNode = $('#advisorOptionsSummary'); const optionsAlertsNode = $('#advisorOptionsAlerts'); if (!diagnosis) return; $('#advisorMinLiquidity').value = formatInputNumber(state.advisor.minimumLiquidityTarget); $('#advisorUpcomingDebt').value = formatInputNumber(state.advisor.upcomingDebt); $('#advisorUpcomingDebtMonths').value = state.advisor.upcomingDebtMonths ?? ''; $('#advisorSavingsCapacity').value = formatInputNumber(state.advisor.savingsCapacity); $('#advisorEmergencyFund').value = formatInputNumber(state.advisor.emergencyFundTarget); state.recommendations = buildRecommendations(); const sortedRecommendations = sortRows(state.recommendations, 'recommendations'); const { signals } = advisorSignals(); const options = optionsSummary(); diagnosis.className = 'summary-stack'; diagnosis.innerHTML = executiveDiagnosis(state.recommendations).map((line, index) => index === 0 ? `<strong>${escapeHtml(line)}</strong>` : `<small>${escapeHtml(line)}</small>`).join(''); priorities.className = state.recommendations.length ? 'scenario-list' : 'scenario-list empty-state'; priorities.innerHTML = state.recommendations.slice(0, 3).map(item => `<article class="priority-card"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.urgency)}</span><small>${escapeHtml(item.explanation)}</small><small>Acción: ${escapeHtml(item.action || 'Pendiente de concretar')}</small><small>Revisión: ${dateEs(String(item.reviewDate).slice(0, 10))}</small></article>`).join('') || 'Sin datos'; signalsNode.className = 'signal-list'; signalsNode.innerHTML = signals.map(signal => `<div class="signal-row signal-${signal.tone}"><strong>${escapeHtml(signal.title)}</strong><span>${escapeHtml(signal.name)}</span><small>${escapeHtml(signal.detail)}</small></div>`).join(''); optionsSummaryNode.className = 'summary-stack'; optionsSummaryNode.innerHTML = options.open.length ? [`<strong>${options.open.length} posiciones abiertas</strong>`, `<small>Garantías reservadas: ${eur.format(options.totalCollateral)}</small>`, `<small>Primas netas acumuladas: ${eur.format(options.totalPremium)}</small>`, `<small>Exposición potencial por asignación: ${eur.format(options.assignedPotential)}</small>`].join('') : '<small>No hay opciones abiertas registradas.</small>'; optionsAlertsNode.className = 'signal-list'; const optionAlertCards = []; if (options.expiringSoon.length) optionAlertCards.push({ tone: 'warn', title: 'Vencimientos próximos', detail: `${options.expiringSoon.length} posiciones vencen en los próximos 45 días.` }); if (options.totalCollateral > fullMetrics().liquidity * 0.4 && fullMetrics().liquidity > 0) optionAlertCards.push({ tone: 'risk', title: 'Liquidez comprometida', detail: 'Las garantías absorben una parte demasiado alta de la caja disponible.' }); if (!optionAlertCards.length) optionAlertCards.push({ tone: 'good', title: 'Opciones bajo control', detail: 'No hay alertas críticas en las posiciones registradas.' }); optionsAlertsNode.innerHTML = optionAlertCards.map(item => `<div class="signal-row signal-${item.tone}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div>`).join(''); recommendationRows.innerHTML = sortedRecommendations.length ? sortedRecommendations.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.category)} | ${escapeHtml(advisoryKindLabel(item.kind))}</small><br><small>${escapeHtml(item.action || item.explanation)}</small></td><td>${escapeHtml(item.urgency)}</td><td>${escapeHtml(item.impact)}</td><td>${escapeHtml(item.risk)}</td><td>${dateEs(String(item.reviewDate).slice(0, 10))}</td><td>${escapeHtml(item.statusLabel || recommendationStatusLabel(item.status))}</td><td><div class="recommendation-actions"><wa-button size="small" appearance="plain" data-rec-action="accept" data-rec-id="${item.id}">Aceptar</wa-button><wa-button size="small" appearance="plain" data-rec-action="execute" data-rec-id="${item.id}">Ejecutada</wa-button><wa-button size="small" appearance="plain" data-rec-action="postpone" data-rec-id="${item.id}">Posponer</wa-button><wa-button size="small" appearance="plain" data-rec-action="discard" data-rec-id="${item.id}">Descartar</wa-button></div></td></tr>`).join('') : '<tr><td colspan="7" class="empty-cell">Sin recomendaciones todavía.</td></tr>'; const reviews = decisionReviewsRows(); decisionRows.innerHTML = reviews.length ? reviews.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.phaseLabel)} | ${escapeHtml(item.actionLabel)}</small></td><td>${item.decidedAt ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.decidedAt)) : '-'}</td><td>${dateEs(String(item.reviewDate || '').slice(0, 10))}</td><td>${escapeHtml(item.statusLabel)}</td><td>${escapeHtml(item.lesson || item.reason || item.expectedOutcome || 'Sin aprendizaje registrado')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Aún no hay decisiones registradas.</td></tr>'; }
-function renderOptionsModule() { const summaryNode = $('#optionSummary'); const rowsNode = $('#optionRows'); if (!summaryNode || !rowsNode) return; const summary = optionsSummary(); summaryNode.className = 'summary-stack'; summaryNode.innerHTML = summary.open.length ? [`<strong>${summary.open.length} posiciones abiertas</strong>`, `<small>Garantías reservadas: ${eur.format(summary.totalCollateral)}</small>`, `<small>Primas abiertas: ${eur.format(summary.openPremium)}</small>`, `<small>Primas históricas netas: ${eur.format(summary.totalPremium)}</small>`, `<small>Vencimientos próximos: ${summary.expiringSoon.length}</small>`].join('') : '<small>Sin operaciones registradas.</small>'; const rows = sortRows(state.options.map(option => { const derived = optionDerived(option); return { ...option, netPremium: derived.netPremium, capitalCommitted: derived.capitalCommitted }; }), 'options'); rowsNode.innerHTML = rows.length ? rows.map(option => { const derived = optionDerived(option); return `<tr><td class="company-cell"><strong>${escapeHtml(option.underlying || option.ticker || 'Sin subyacente')}</strong><small>${escapeHtml(option.ticker || '-')} | ${escapeHtml(option.isin || 'Sin ISIN')}</small></td><td>${option.optionType === 'put' ? 'Put' : 'Call'}<br><small>${escapeHtml(option.strategy)}</small></td><td>${escapeHtml(option.objective === 'income' ? 'Prima' : 'Comprar acciones')}<br><small>Entrada efectiva ${derived.effectiveEntry === null ? '-' : eur.format(derived.effectiveEntry)}</small></td><td>${dateEs(option.expiration)}</td><td>${eur.format(derived.netPremium)}</td><td>${eur.format(derived.capitalCommitted)}</td><td>${escapeHtml(option.status)}</td><td><wa-button size="small" appearance="plain" data-delete-option="${option.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`; }).join('') : '<tr><td colspan="8" class="empty-cell">No hay posiciones en opciones.</td></tr>'; }
+function optionStressScenario() {
+  const openPuts = state.options.filter(option => option.status === 'open' && option.optionType === 'put' && option.side === 'sell');
+  const metrics = fullMetrics();
+  const totalAssignmentCost = openPuts.reduce((sum, option) => sum + (option.strike || 0) * (option.contracts || 0) * (option.multiplier || 100), 0);
+  return { positions: openPuts.length, totalAssignmentCost, liquidityAfter: metrics.liquidity - totalAssignmentCost, stillComfortable: (metrics.liquidity - totalAssignmentCost) >= 0 };
+}
+function renderOptionsLiquidityBreakdown() {
+  const node = $('#optionsLiquidityBreakdown');
+  if (!node) return;
+  const metrics = fullMetrics();
+  const summary = optionsSummary();
+  const stress = optionStressScenario();
+  const items = [
+    ['Liquidez bruta', eur.format(metrics.liquidity)],
+    ['Capital comprometido (puts abiertas)', eur.format(summary.totalCollateral)],
+    ['Liquidez libre', eur.format(metrics.liquidity - summary.totalCollateral)],
+    ['% de liquidez comprometida', metrics.liquidity ? formatPercent(Math.min(1, summary.totalCollateral / metrics.liquidity)) : '-'],
+    ['Si todas las puts se asignan hoy', eur.format(stress.liquidityAfter)],
+    ['¿Sigue siendo cómodo?', stress.stillComfortable ? 'Sí' : 'No: faltaría liquidez']
+  ];
+  node.innerHTML = items.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`).join('');
+}
+function renderOptionsModule() {
+  const portfolioSummaryNode = $('#portfolioOptionsSummary');
+  const rowsNode = $('#optionRows');
+  renderOptionsLiquidityBreakdown();
+  if (portfolioSummaryNode) {
+    const summary = optionsSummary();
+    portfolioSummaryNode.className = summary.open.length ? 'summary-stack' : 'summary-stack empty-state';
+    portfolioSummaryNode.innerHTML = summary.open.length ? [`<strong>${summary.open.length} posiciones abiertas</strong>`, `<small>Garantías reservadas: ${eur.format(summary.totalCollateral)}</small>`, `<small>Primas abiertas: ${eur.format(summary.openPremium)}</small>`, `<small>Vencimientos próximos: ${summary.expiringSoon.length}</small>`].join('') : 'Sin operaciones registradas.';
+  }
+  if (!rowsNode) return;
+  const visible = state.options.filter(option => ['proposal', 'open', 'rolled'].includes(option.status));
+  const rows = sortRows(visible, 'options');
+  rowsNode.innerHTML = rows.length ? rows.map(option => {
+    const derived = optionDerived(option);
+    return `<tr><td class="company-cell"><strong>${escapeHtml(option.underlying || option.ticker || 'Sin subyacente')}</strong><small>${escapeHtml(option.ticker || '-')} | ${escapeHtml(option.isin || 'Sin ISIN')}</small></td><td>${option.optionType === 'put' ? 'Put' : 'Call'} ${option.side === 'sell' ? 'vendida' : 'comprada'}</td><td>${escapeHtml(option.strategy)}</td><td>${dateEs(option.expiration)}</td><td>${eur.format(derived.netPremium)}</td><td>${eur.format(derived.capitalCommitted)}</td><td>${escapeHtml(OPTION_STATUS_LABELS[option.status] || option.status)}</td><td><div class="recommendation-actions"><wa-button size="small" appearance="plain" data-manage-option="${option.id}"><wa-icon name="gear"></wa-icon></wa-button><wa-button size="small" appearance="plain" data-delete-option="${option.id}"><wa-icon name="trash"></wa-icon></wa-button></div></td></tr>`;
+  }).join('') : '<tr><td colspan="8" class="empty-cell">No hay posiciones en opciones.</td></tr>';
+}
+let managingOptionId = null;
+function openOptionActionDialog(optionId) {
+  const option = state.options.find(item => item.id === optionId);
+  if (!option) return;
+  managingOptionId = optionId;
+  $('#optionActionSummary').textContent = `${option.underlying || option.ticker || 'Sin subyacente'} | ${option.optionType === 'put' ? 'Put' : 'Call'} ${option.side === 'sell' ? 'vendida' : 'comprada'} | Strike ${eur.format(option.strike || 0)} | Vence ${dateEs(option.expiration)}`;
+  const typeSelect = $('#optionActionType');
+  const isPutSell = option.optionType === 'put' && option.side === 'sell';
+  const isCoveredCall = option.optionType === 'call' && option.side === 'sell' && option.strategy === 'covered-call';
+  [...typeSelect.querySelectorAll('wa-option')].forEach(opt => {
+    if (opt.value === 'assigned') opt.hidden = !isPutSell;
+    if (opt.value === 'exercised') opt.hidden = !isCoveredCall;
+    if (opt.value === 'cancelled') opt.hidden = option.status !== 'proposal';
+  });
+  typeSelect.value = option.status === 'proposal' ? 'cancelled' : 'close';
+  $('#optionActionDate').value = new Date().toISOString().slice(0, 10);
+  $('#optionActionPremium').value = '';
+  $('#optionActionFees').value = '';
+  $('#optionActionReason').value = '';
+  $('#rollStrike').value = '';
+  $('#rollExpiration').value = '';
+  $('#rollPremiumPerShare').value = '';
+  $('#rollContracts').value = String(option.contracts || 1);
+  $('#rollFees').value = '';
+  updateOptionActionFieldsVisibility();
+  $('#optionActionDialog').open = true;
+}
+function updateOptionActionFieldsVisibility() {
+  const action = $('#optionActionType')?.value;
+  const closeFields = $('#optionActionCloseFields');
+  const rollFields = $('#optionActionRollFields');
+  const netResult = $('#optionActionNetResult');
+  if (!closeFields || !rollFields || !netResult) return;
+  closeFields.hidden = !['close', 'expired', 'assigned', 'exercised', 'roll'].includes(action);
+  rollFields.hidden = action !== 'roll';
+  netResult.hidden = action !== 'roll';
+  if (action === 'roll') updateRollPreview();
+}
+function optionLegCashFlow(side, premiumPerShare, shares, fees, isOpening) {
+  const gross = (premiumPerShare || 0) * shares;
+  if (isOpening) return side === 'sell' ? (gross - fees) : -(gross + fees);
+  return side === 'sell' ? -(gross + fees) : (gross - fees);
+}
+function updateRollPreview() {
+  const option = state.options.find(item => item.id === managingOptionId);
+  if (!option) return;
+  const shares = (option.contracts || 0) * (option.multiplier || 100);
+  const closeCashFlow = optionLegCashFlow(option.side, parseLocaleNumber($('#optionActionPremium').value) || 0, shares, parseLocaleNumber($('#optionActionFees').value) || 0, false);
+  const rollContracts = Number($('#rollContracts').value || option.contracts || 1);
+  const rollShares = rollContracts * (option.multiplier || 100);
+  const openCashFlow = optionLegCashFlow(option.side, parseLocaleNumber($('#rollPremiumPerShare').value) || 0, rollShares, parseLocaleNumber($('#rollFees').value) || 0, true);
+  const net = closeCashFlow + openCashFlow;
+  const node = $('#optionActionNetResult');
+  node.hidden = false;
+  node.textContent = `${net >= 0 ? 'Crédito neto' : 'Débito neto'} del roll: ${eur.format(Math.abs(net))}.`;
+}
+function applyPutAssignment(option) {
+  const shares = (option.contracts || 0) * (option.multiplier || 100);
+  const linked = findLinkedPortfolioPosition(option);
+  const now = new Date().toISOString();
+  if (linked) {
+    const newQuantity = (linked.quantity || 0) + shares;
+    const newTotalCost = (linked.totalCost || 0) + (option.strike || 0) * shares;
+    state.portfolio = state.portfolio.map(position => position.id === linked.id ? { ...position, quantity: newQuantity, totalCost: newTotalCost, averagePrice: newQuantity ? newTotalCost / newQuantity : position.averagePrice, updatedAt: now } : position);
+  } else {
+    state.portfolio.push(migratePosition({
+      isin: option.isin || '', symbol: option.ticker, name: option.underlying || option.ticker,
+      quantity: shares, averagePrice: option.strike, totalCost: (option.strike || 0) * shares,
+      currentPrice: option.underlyingPriceAtOpen || option.strike, marketValue: (option.underlyingPriceAtOpen || option.strike || 0) * shares,
+      currency: option.currency, sector: option.sector || 'Sin clasificar', country: option.country || 'Sin país',
+      status: 'active', notes: `Creada por asignación de la opción ${option.id}.`,
+      createdAt: now, updatedAt: now, importMeta: { source: 'option-assignment', importedAt: now }
+    }));
+  }
+}
+function applyCoveredCallExercise(option) {
+  const linked = findLinkedPortfolioPosition(option);
+  if (!linked) return 0;
+  const shares = (option.contracts || 0) * (option.multiplier || 100);
+  const now = new Date().toISOString();
+  const sellShares = Math.min(linked.quantity || 0, shares);
+  const remainingQuantity = Math.max(0, (linked.quantity || 0) - sellShares);
+  const proportionalCost = (linked.quantity || 0) ? (linked.totalCost || 0) * (sellShares / linked.quantity) : 0;
+  const remainingTotalCost = (linked.totalCost || 0) - proportionalCost;
+  state.portfolio = state.portfolio.map(position => position.id === linked.id ? { ...position, quantity: remainingQuantity, totalCost: remainingTotalCost, status: remainingQuantity > 0 ? position.status : 'archived', archivedAt: remainingQuantity > 0 ? null : now, updatedAt: now } : position);
+  return ((option.strike || 0) * sellShares) - proportionalCost;
+}
+function scheduleOptionDecisionReviews(option) {
+  const decidedAt = option.closedAt ? `${option.closedAt}T12:00:00.000Z` : new Date().toISOString();
+  const label = `${option.underlying || option.ticker || 'Opción'} (${OPTION_STATUS_LABELS[option.status] || option.status})`;
+  const checkpoints = [{ phase: '3m', days: 90 }, { phase: '6m', days: 180 }, { phase: '12m', days: 365 }];
+  const existingPhases = new Set((state.decisionReviews || []).filter(item => item.recommendationId === option.id).map(item => item.phase));
+  const additions = checkpoints.filter(checkpoint => !existingPhases.has(checkpoint.phase)).map(checkpoint => migrateDecisionReview({
+    recommendationId: option.id, title: label, category: 'Opciones', phase: checkpoint.phase,
+    actionLabel: OPTION_STATUS_LABELS[option.status] || option.status, status: 'pending',
+    reason: option.closeReason || '', expectedOutcome: option.thesis || option.exitPlan || '',
+    createdAt: option.createdAt || decidedAt, decidedAt,
+    reviewDate: new Date(new Date(decidedAt).getTime() + checkpoint.days * 86400000).toISOString()
+  }));
+  if (additions.length) state.decisionReviews = [...additions, ...(state.decisionReviews || [])];
+}
+function applyOptionAction() {
+  const option = state.options.find(item => item.id === managingOptionId);
+  if (!option) return;
+  const action = $('#optionActionType').value;
+  const date = $('#optionActionDate').value || new Date().toISOString().slice(0, 10);
+  const closePremium = parseLocaleNumber($('#optionActionPremium').value);
+  const closeFees = parseLocaleNumber($('#optionActionFees').value) || 0;
+  const reason = cleanText($('#optionActionReason').value);
+  const shares = (option.contracts || 0) * (option.multiplier || 100);
+  const now = new Date().toISOString();
+  const openCashFlow = optionLegCashFlow(option.side, option.premiumPerShare, shares, option.fees || 0, true);
+  let updated = { ...option, updatedAt: now };
+  let extraNotice = '';
+
+  if (action === 'close') {
+    const closeCashFlow = optionLegCashFlow(option.side, closePremium, shares, closeFees, false);
+    updated = { ...updated, status: 'closed', closedAt: date, closePremiumPerShare: closePremium, closeFees, closeReason: reason, realizedResult: openCashFlow + closeCashFlow };
+  } else if (action === 'expired') {
+    updated = { ...updated, status: 'expired', closedAt: date, closePremiumPerShare: 0, closeFees: 0, closeReason: reason || 'Vencida sin valor.', realizedResult: openCashFlow };
+  } else if (action === 'assigned') {
+    applyPutAssignment(option);
+    updated = { ...updated, status: 'assigned', closedAt: date, closeReason: reason || 'Asignada: acciones incorporadas a la cartera. La prima queda incorporada al precio de coste, no se contabiliza aparte.', realizedResult: null };
+    extraNotice = ' La cartera se ha actualizado con las acciones asignadas.';
+  } else if (action === 'exercised') {
+    const capitalGain = applyCoveredCallExercise(option);
+    updated = { ...updated, status: 'exercised', closedAt: date, closeReason: reason || 'Ejercida: acciones vendidas al strike.', realizedResult: openCashFlow + capitalGain };
+    extraNotice = ' La cartera se ha actualizado reduciendo las acciones cubiertas.';
+  } else if (action === 'cancelled') {
+    updated = { ...updated, status: 'cancelled', closedAt: date, closeReason: reason || 'Propuesta cancelada.' };
+  } else if (action === 'roll') {
+    const closeCashFlow = optionLegCashFlow(option.side, closePremium, shares, closeFees, false);
+    const newOption = migrateOptionPosition({
+      ...option, id: undefined,
+      strike: parseLocaleNumber($('#rollStrike').value) ?? option.strike,
+      expiration: $('#rollExpiration').value || option.expiration,
+      premiumPerShare: parseLocaleNumber($('#rollPremiumPerShare').value),
+      contracts: Number($('#rollContracts').value || option.contracts),
+      fees: parseLocaleNumber($('#rollFees').value) || 0,
+      status: 'open', rollFromId: option.id, rolledToId: '', openedAt: date,
+      closedAt: '', closePremiumPerShare: null, closeFees: 0, closeReason: '', realizedResult: null,
+      createdAt: now, updatedAt: now
+    });
+    updated = { ...updated, status: 'rolled', closedAt: date, closePremiumPerShare: closePremium, closeFees, closeReason: reason || 'Rolada a nuevo contrato.', realizedResult: openCashFlow + closeCashFlow, rolledToId: newOption.id };
+    state.options.unshift(newOption);
+    extraNotice = ' Se ha creado el nuevo contrato vinculado.';
+  }
+
+  const migratedUpdate = migrateOptionPosition(updated);
+  state.options = state.options.map(item => item.id === option.id ? migratedUpdate : item);
+  if (['closed', 'expired', 'assigned', 'exercised', 'rolled'].includes(migratedUpdate.status)) scheduleOptionDecisionReviews(migratedUpdate);
+  saveState();
+  render();
+  $('#optionActionDialog').open = false;
+  showNotice(`Operación actualizada: ${OPTION_STATUS_LABELS[migratedUpdate.status] || migratedUpdate.status}.${extraNotice}`);
+}
+function renderOptionHistory() {
+  const rowsNode = $('#optionHistoryRows');
+  const decisionRowsNode = $('#optionDecisionRows');
+  if (!rowsNode) return;
+  const closed = sortRows(state.options.filter(option => ['closed', 'expired', 'assigned', 'exercised', 'rolled', 'cancelled'].includes(option.status)), 'options');
+  rowsNode.innerHTML = closed.length ? closed.map(option => `<tr><td class="company-cell"><strong>${escapeHtml(option.underlying || option.ticker || 'Sin subyacente')}</strong><small>${escapeHtml(option.ticker || '-')}</small></td><td>${escapeHtml(option.strategy)}</td><td>${escapeHtml(OPTION_STATUS_LABELS[option.status] || option.status)}</td><td>${dateEs(option.openedAt)}</td><td>${dateEs(option.closedAt)}</td><td class="${(option.realizedResult || 0) >= 0 ? 'positive' : 'negative'}">${option.realizedResult === null || option.realizedResult === undefined ? '-' : eur.format(option.realizedResult)}</td><td><wa-button size="small" appearance="plain" data-delete-option="${option.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="7" class="empty-cell">Sin operaciones cerradas todavía.</td></tr>';
+  if (!decisionRowsNode) return;
+  const reviews = decisionReviewsRows().filter(item => item.category === 'Opciones');
+  decisionRowsNode.innerHTML = reviews.length ? reviews.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.actionLabel)}</small></td><td>${escapeHtml(item.phaseLabel)}</td><td>${dateEs(String(item.reviewDate || '').slice(0, 10))}</td><td>${escapeHtml(item.statusLabel)}</td><td>${escapeHtml(item.lesson || item.reason || item.expectedOutcome || 'Sin aprendizaje registrado')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Sin revisiones todavía.</td></tr>';
+}
+function renderOptionsCalendar() {
+  const node = $('#optionsCalendarRows');
+  if (!node) return;
+  const events = [];
+  state.options.filter(option => ['open', 'proposal', 'rolled'].includes(option.status)).forEach(option => {
+    const label = option.underlying || option.ticker || 'Opción';
+    if (option.expiration) events.push({ date: option.expiration, tone: optionDaysToExpiration(option) <= 7 ? 'risk' : optionDaysToExpiration(option) <= 30 ? 'warn' : 'good', title: 'Vencimiento', detail: `${label} | ${option.strategy}` });
+    if (option.earningsDate) events.push({ date: option.earningsDate, tone: 'warn', title: 'Resultados', detail: label });
+    if (option.exDividendDate) events.push({ date: option.exDividendDate, tone: 'warn', title: 'Ex-dividendo', detail: label });
+  });
+  decisionReviewsRows().filter(item => item.category === 'Opciones' && ['pending', 'reviewing'].includes(item.status)).forEach(item => {
+    if (item.reviewDate) events.push({ date: item.reviewDate, tone: 'good', title: 'Revisión de decisión', detail: item.title });
+  });
+  events.sort((a, b) => new Date(a.date) - new Date(b.date));
+  node.className = events.length ? 'signal-list' : 'signal-list empty-state';
+  node.innerHTML = events.length ? events.map(event => `<div class="signal-row signal-${event.tone}"><strong>${dateEs(String(event.date).slice(0, 10))}</strong><span>${escapeHtml(event.title)}</span><small>${escapeHtml(event.detail)}</small></div>`).join('') : 'Sin eventos próximos.';
+}
+function renderOptionsStats() {
+  if (!$('#statPremiumNet')) return;
+  const all = state.options;
+  const terminal = all.filter(option => ['closed', 'expired', 'assigned', 'exercised', 'rolled'].includes(option.status));
+  const grossPremium = all.reduce((sum, option) => sum + optionDerived(option).grossPremium, 0);
+  const netPremium = all.reduce((sum, option) => sum + optionDerived(option).netPremium, 0);
+  const withResult = terminal.filter(option => option.realizedResult !== null && option.realizedResult !== undefined);
+  const realized = withResult.reduce((sum, option) => sum + option.realizedResult, 0);
+  const winners = withResult.filter(option => option.realizedResult > 0).length;
+  const losers = withResult.filter(option => option.realizedResult < 0).length;
+  const winRate = withResult.length ? winners / withResult.length : null;
+  const capitalValues = all.map(option => optionDerived(option).capitalCommitted).filter(value => value > 0);
+  const avgCapital = capitalValues.length ? capitalValues.reduce((sum, value) => sum + value, 0) / capitalValues.length : 0;
+  const daysValues = terminal.filter(option => option.openedAt && option.closedAt).map(option => Math.max(0, (new Date(option.closedAt) - new Date(option.openedAt)) / 86400000));
+  const avgDays = daysValues.length ? Math.round(daysValues.reduce((sum, value) => sum + value, 0) / daysValues.length) : 0;
+  $('#statPremiumNet').textContent = eur.format(netPremium);
+  $('#statPremiumGross').textContent = `Brutas: ${eur.format(grossPremium)}`;
+  $('#statRealized').textContent = eur.format(realized);
+  $('#statRealizedMeta').textContent = `${winners} ganadoras | ${losers} perdedoras`;
+  $('#statWinRate').textContent = winRate === null ? '--' : formatPercent(winRate);
+  $('#statAvgCapital').textContent = eur.format(avgCapital);
+  $('#statAvgDays').textContent = `Días medios por operación: ${avgDays}`;
+  const groupBy = (list, keyFn) => { const map = new Map(); list.forEach(option => { const key = keyFn(option) || 'Sin clasificar'; const entry = map.get(key) || { count: 0, result: 0 }; entry.count += 1; entry.result += option.realizedResult || 0; map.set(key, entry); }); return [...map.entries()].sort((a, b) => b[1].result - a[1].result); };
+  const renderGroup = (nodeId, groups) => { const node = $(nodeId); if (!node) return; node.className = groups.length ? 'signal-list' : 'signal-list empty-state'; node.innerHTML = groups.length ? groups.map(([key, entry]) => `<div class="signal-row signal-${entry.result >= 0 ? 'good' : 'risk'}"><strong>${escapeHtml(key)}</strong><span>${eur.format(entry.result)}</span><small>${entry.count} operación${entry.count === 1 ? '' : 'es'}</small></div>`).join('') : 'Sin datos'; };
+  renderGroup('#statByStrategy', groupBy(withResult, option => option.strategy));
+  renderGroup('#statByUnderlying', groupBy(withResult, option => option.underlying || option.ticker));
+  renderGroup('#statByYear', groupBy(withResult, option => option.closedAt ? option.closedAt.slice(0, 4) : null));
+  renderGroup('#statByCurrency', groupBy(withResult, option => option.currency));
+}
 function reviewCheckpointsForRecommendation(recommendation, actionLabel, status, reason) { const decidedAt = new Date().toISOString(); return [{ phase: '3m', days: 90 }, { phase: '6m', days: 180 }, { phase: '12m', days: 365 }].map(checkpoint => migrateDecisionReview({ recommendationId: recommendation.id, title: recommendation.title, category: recommendation.category, phase: checkpoint.phase, actionLabel, status: ['accepted', 'executed'].includes(status) ? 'pending' : status, reason, expectedOutcome: recommendation.action || recommendation.impact, lesson: '', createdAt: recommendation.createdAt || decidedAt, decidedAt, reviewDate: new Date(Date.now() + checkpoint.days * 86400000).toISOString() })); }
 function handleRecommendationAction(action, recommendationId) { const index = state.recommendations.findIndex(item => item.id === recommendationId); if (index < 0) return; const recommendation = state.recommendations[index]; const promptReason = window.prompt(`Motivo para marcar la recomendación como ${recommendationActionLabel(action).toLowerCase()}:`, recommendation.reason || ''); const reason = promptReason ?? recommendation.reason ?? ''; const nextStatus = action === 'accept' ? 'accepted' : action === 'execute' ? 'executed' : action === 'postpone' ? 'postponed' : 'discarded'; state.recommendations[index] = migrateRecommendation({ ...recommendation, status: nextStatus, reason, decidedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); state.decisionReviews = [...reviewCheckpointsForRecommendation(recommendation, recommendationActionLabel(action), nextStatus, reason), ...(state.decisionReviews || []).filter(item => item.recommendationId !== recommendationId)].map(migrateDecisionReview); saveState(); renderAdvisorCenter(); renderSortableHeaders(); showNotice(`Recomendación ${recommendationActionLabel(action).toLowerCase()}.`); }
 function undoLastImport() { if (!state.lastImportUndo?.snapshot) { showNotice('No hay ninguna importación que deshacer.'); return; } const snapshot = state.lastImportUndo.snapshot; state.portfolio = (snapshot.portfolio || []).map(migratePosition).filter(Boolean); state.transactions = (snapshot.transactions || []).map(migrateTransaction).filter(Boolean); state.options = (snapshot.options || []).map(migrateOptionPosition).filter(Boolean); state.recommendations = (snapshot.recommendations || []).map(migrateRecommendation).filter(Boolean); state.decisionReviews = (snapshot.decisionReviews || []).map(migrateDecisionReview).filter(Boolean); state.advisor = { ...defaultAdvisorState(snapshot.settings || DEFAULT_SETTINGS), ...(snapshot.advisor || {}) }; state.history = (snapshot.history || []).map(migrateSnapshot).filter(Boolean); state.assets = (snapshot.assets || []).map(migrateAsset).filter(Boolean); state.liabilities = (snapshot.liabilities || []).map(migrateLiability).filter(Boolean); state.reportHistory = (snapshot.reportHistory || []).map(migrateReportEntry).filter(Boolean); state.settings = migrateSettings(snapshot.settings); state.lastImport = snapshot.lastImport || null; state.lastTransactionsImport = snapshot.lastTransactionsImport || null; state.lastBackupAt = snapshot.lastBackupAt || null; state.lastImportUndo = null; saveState(); render(); showNotice('Se ha restaurado la copia previa a la última importación.'); }
-function buildPortfolioDataMarkdown() { const portfolio = sortedPortfolio(activePortfolio()); const metrics = fullMetrics(portfolio); const sector = groupByValue(portfolio, 'sector', metrics.value); const country = groupByValue(portfolio, 'country', metrics.value); const score = portfolioScore(portfolio); const signals = concentrationSignals(portfolio); const scenarios = independenceScenarios(metrics); const transactions = transactionRowsData(); const txAnalytics = transactionAnalytics(transactions); const options = optionsSummary(); const recommendations = buildRecommendations(); const reviews = decisionReviewsRows(); return ['# Datos patrimoniales exportados', '', `Fecha del informe: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'long' }).format(new Date())}`, '', '## Diagnóstico ejecutivo', executiveVerdict(recommendations), '', '## Resumen patrimonial', `- Valor de cartera: ${eur.format(metrics.value)}`, `- Coste invertido: ${eur.format(metrics.cost)}`, `- Plusvalía: ${eur.format(metrics.gain)}`, `- Dividendos anuales estimados: ${eur.format(metrics.dividends)}`, `- Liquidez registrada: ${eur.format(metrics.liquidity)}`, `- Liquidez útil tras garantías: ${eur.format(Math.max(0, metrics.liquidity - options.totalCollateral))}`, `- Otros activos: ${eur.format(metrics.otherAssets)}`, `- Deuda total: ${eur.format(metrics.liabilities)}`, `- Patrimonio neto: ${eur.format(metrics.netWorth)}`, '', '## Salud de la cartera', `- Puntuación global: ${score.value}/100 (${score.label})`, ...signals.map(signal => `- Concentración ${signal.title.toLowerCase()}: ${signal.name} con ${pct.format(signal.weight)} (${signal.label})`), '', '## Objetivos financieros', `- Gasto mensual objetivo: ${state.settings.monthlyExpense === null ? 'No configurado' : eur.format(state.settings.monthlyExpense)}`, `- Objetivo anual de dividendos: ${state.settings.targetAnnualDividends === null ? 'No configurado' : eur.format(state.settings.targetAnnualDividends)}`, `- Objetivo de patrimonio neto: ${state.settings.targetNetWorth === null ? 'No configurado' : eur.format(state.settings.targetNetWorth)}`, `- Aportación mensual prevista: ${state.settings.monthlyContribution === null ? 'No configurada' : eur.format(state.settings.monthlyContribution)}`, '', '## Escenarios de independencia financiera', ...(scenarios ? scenarios.map(s => `- ${s.label}: ${s.years === null ? 'más de 40 años' : `${s.years} años`} | meta estimada ${s.eta}`) : ['- Configura el gasto mensual para obtener escenarios.']), '', '## Cambios frente al cierre anterior', ...reportDeltaSection(), '', '## Actividad de capital y transacciones', `- Operaciones importadas: ${transactions.length}`, `- Compras netas 12m: ${eur.format(txAnalytics.lastTwelveMonths.netAmount)}`, `- Comisiones e impuestos acumulados: ${eur.format(txAnalytics.allTotals.costs)}`, `- Plusvalía realizada estimada: ${eur.format(txAnalytics.realized)}`, `- Ritmo medio de compras 6m: ${eur.format(txAnalytics.monthlyBuys)}`, '', '## Operativa con opciones', `- Posiciones abiertas: ${options.open.length}`, `- Garantías reservadas: ${eur.format(options.totalCollateral)}`, `- Primas netas acumuladas: ${eur.format(options.totalPremium)}`, `- Exposición potencial por asignación: ${eur.format(options.assignedPotential)}`, `- Vencimientos próximos: ${options.expiringSoon.length}`, ...options.open.slice(0, 10).map(option => { const derived = optionDerived(option); return `- ${option.underlying || option.ticker}: ${option.optionType} ${dateEs(option.expiration)} | prima ${eur.format(derived.netPremium)} | capital ${eur.format(derived.capitalCommitted)} | entrada efectiva ${derived.effectiveEntry === null ? '-' : eur.format(derived.effectiveEntry)}`; }), '', '## Recomendaciones priorizadas', ...(recommendations.length ? recommendations.map(item => `- [${advisoryKindLabel(item.kind)}] ${item.title} | urgencia ${item.urgency} | impacto ${item.impact} | revisar ${dateEs(String(item.reviewDate).slice(0, 10))} | acción: ${item.action}`) : ['- No hay recomendaciones activas.']), '', '## Seguimiento de decisiones', ...(reviews.length ? reviews.slice(0, 12).map(item => `- ${item.phaseLabel} | ${item.title} | estado ${item.statusLabel} | revisión ${dateEs(String(item.reviewDate || '').slice(0, 10))} | esperado: ${item.expectedOutcome || '-'} | observado: ${item.actualOutcome || '-'} | aprendizaje: ${item.lesson || '-'}`) : ['- No hay revisiones registradas.']), '', '## Cartera', '| Empresa | Ticker | ISIN | Valor | Peso | Dividendo anual | Yield | YOC | Estado |', '|---|---|---|---:|---:|---:|---:|---:|---|', ...portfolio.map(position => `| ${position.name.replaceAll('|', '/')} | ${position.symbol} | ${position.isin} | ${eur.format(position.marketValue || 0)} | ${formatPercent(position.allocation)} | ${eur.format(position.annualDividend || 0)} | ${formatPercent(position.dividendYield)} | ${formatPercent(position.yieldOnCost)} | ${position.status} |`), '', '## Distribución por sectores', ...sector.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`), '', '## Distribución geográfica', ...country.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`), '', '## Liquidez, activos y deuda', ...state.assets.map(asset => `- Activo ${asset.name} (${asset.type}): ${eur.format(asset.value || 0)}`), ...state.liabilities.map(liability => `- Deuda ${liability.name} (${liability.type}): ${eur.format(liability.value || 0)}`), '', '## Histórico de informes registrados', ...recentReportSummary(), '', '## Comentarios personales', '- Exportado desde la aplicación local-first. Los datos permanecen en el dispositivo.'].join('\n'); }
+function optionsOpenRiskLines() {
+  const open = state.options.filter(option => ['open', 'rolled'].includes(option.status));
+  if (!open.length) return ['- Sin posiciones abiertas.'];
+  const lines = [];
+  open.forEach(option => {
+    const analysis = computeOptionAnalysis(option);
+    const trafficLight = optionRiskTrafficLight(option, analysis);
+    if (trafficLight.tone !== 'good') lines.push(`- ${option.underlying || option.ticker}: ${trafficLight.reasons.join(' ')}`);
+  });
+  return lines.length ? lines : ['- Sin alertas relevantes en las posiciones abiertas.'];
+}
+function optionsClosedThisMonthLines() {
+  const monthKey = currentMonthKey();
+  const closed = state.options.filter(option => option.closedAt && option.closedAt.slice(0, 7) === monthKey);
+  if (!closed.length) return ['- Sin operaciones cerradas este mes.'];
+  return closed.map(option => `- ${option.underlying || option.ticker}: ${OPTION_STATUS_LABELS[option.status] || option.status} el ${dateEs(option.closedAt)} | resultado ${option.realizedResult === null || option.realizedResult === undefined ? 'incorporado a cartera' : eur.format(option.realizedResult)}`);
+}
+function optionsPendingReviewLines() {
+  const pending = decisionReviewsRows().filter(item => item.category === 'Opciones' && ['pending', 'reviewing'].includes(item.status));
+  if (!pending.length) return ['- Sin decisiones de opciones pendientes de revisión.'];
+  return pending.slice(0, 10).map(item => `- ${item.title} | ${item.phaseLabel} | revisar ${dateEs(String(item.reviewDate || '').slice(0, 10))}`);
+}
+function optionsStressScenarioLines() {
+  const stress = optionStressScenario();
+  return [
+    `- Puts abiertas consideradas: ${stress.positions}`,
+    `- Coste total si se asignan todas hoy: ${eur.format(stress.totalAssignmentCost)}`,
+    `- Liquidez restante tras la asignación total: ${eur.format(stress.liquidityAfter)}`,
+    `- ¿Seguiría siendo cómoda la situación patrimonial? ${stress.stillComfortable ? 'Sí' : 'No: haría falta liquidez adicional o vender otros activos.'}`
+  ];
+}
+function buildPortfolioDataMarkdown() { const portfolio = sortedPortfolio(activePortfolio()); const metrics = fullMetrics(portfolio); const sector = groupByValue(portfolio, 'sector', metrics.value); const country = groupByValue(portfolio, 'country', metrics.value); const score = portfolioScore(portfolio); const signals = concentrationSignals(portfolio); const scenarios = independenceScenarios(metrics); const transactions = transactionRowsData(); const txAnalytics = transactionAnalytics(transactions); const options = optionsSummary(); const recommendations = buildRecommendations(); const reviews = decisionReviewsRows(); return ['# Datos patrimoniales exportados', '', `Fecha del informe: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'long' }).format(new Date())}`, '', '## Diagnóstico ejecutivo', executiveVerdict(recommendations), '', '## Resumen patrimonial', `- Valor de cartera: ${eur.format(metrics.value)}`, `- Coste invertido: ${eur.format(metrics.cost)}`, `- Plusvalía: ${eur.format(metrics.gain)}`, `- Dividendos anuales estimados: ${eur.format(metrics.dividends)}`, `- Liquidez registrada: ${eur.format(metrics.liquidity)}`, `- Liquidez útil tras garantías: ${eur.format(Math.max(0, metrics.liquidity - options.totalCollateral))}`, `- Otros activos: ${eur.format(metrics.otherAssets)}`, `- Deuda total: ${eur.format(metrics.liabilities)}`, `- Patrimonio neto: ${eur.format(metrics.netWorth)}`, '', '## Salud de la cartera', `- Puntuación global: ${score.value}/100 (${score.label})`, ...signals.map(signal => `- Concentración ${signal.title.toLowerCase()}: ${signal.name} con ${pct.format(signal.weight)} (${signal.label})`), '', '## Objetivos financieros', `- Gasto mensual objetivo: ${state.settings.monthlyExpense === null ? 'No configurado' : eur.format(state.settings.monthlyExpense)}`, `- Objetivo anual de dividendos: ${state.settings.targetAnnualDividends === null ? 'No configurado' : eur.format(state.settings.targetAnnualDividends)}`, `- Objetivo de patrimonio neto: ${state.settings.targetNetWorth === null ? 'No configurado' : eur.format(state.settings.targetNetWorth)}`, `- Aportación mensual prevista: ${state.settings.monthlyContribution === null ? 'No configurada' : eur.format(state.settings.monthlyContribution)}`, '', '## Escenarios de independencia financiera', ...(scenarios ? scenarios.map(s => `- ${s.label}: ${s.years === null ? 'más de 40 años' : `${s.years} años`} | meta estimada ${s.eta}`) : ['- Configura el gasto mensual para obtener escenarios.']), '', '## Cambios frente al cierre anterior', ...reportDeltaSection(), '', '## Actividad de capital y transacciones', `- Operaciones importadas: ${transactions.length}`, `- Compras netas 12m: ${eur.format(txAnalytics.lastTwelveMonths.netAmount)}`, `- Comisiones e impuestos acumulados: ${eur.format(txAnalytics.allTotals.costs)}`, `- Plusvalía realizada estimada: ${eur.format(txAnalytics.realized)}`, `- Ritmo medio de compras 6m: ${eur.format(txAnalytics.monthlyBuys)}`, '', '## Opciones', '', '### Resumen', `- Posiciones abiertas: ${options.open.length}`, `- Prima neta acumulada: ${eur.format(options.totalPremium)}`, `- Capital comprometido: ${eur.format(options.totalCollateral)}`, `- Liquidez libre tras opciones: ${eur.format(Math.max(0, metrics.liquidity - options.totalCollateral))}`, `- Próximos vencimientos (45 días): ${options.expiringSoon.length}`, `- Exposición potencial por asignación: ${eur.format(options.assignedPotential)}`, '', '### Posiciones abiertas', '| Subyacente | Estrategia | Strike | Vencimiento | Prima | Breakeven | Capital comprometido | Estado |', '|---|---|---:|---|---:|---:|---:|---|', ...(options.open.length ? options.open.map(option => { const derived = optionDerived(option); return `| ${(option.underlying || option.ticker || '-').replaceAll('|', '/')} | ${option.strategy} | ${eur.format(option.strike || 0)} | ${dateEs(option.expiration)} | ${eur.format(derived.netPremium)} | ${derived.effectiveEntry === null ? '-' : eur.format(derived.effectiveEntry)} | ${eur.format(derived.capitalCommitted)} | ${OPTION_STATUS_LABELS[option.status] || option.status} |`; }) : ['| - | - | - | - | - | - | - | - |']), '', '### Riesgos', ...(optionsOpenRiskLines()), '', '### Operaciones cerradas del mes', ...optionsClosedThisMonthLines(), '', '### Decisiones pendientes', ...optionsPendingReviewLines(), '', '### Escenario de asignación total', ...optionsStressScenarioLines(), '', '### Preguntas para ChatGPT', '- ¿Qué put o covered call actuales tienen peor relación riesgo/prima?', '- Si todas las puts abiertas se asignaran hoy, ¿qué cambiaría en la concentración de la cartera?', '- ¿Alguna operación debería cerrarse o rolarse antes de vencimiento?', '', '## Recomendaciones priorizadas', ...(recommendations.length ? recommendations.map(item => `- [${advisoryKindLabel(item.kind)}] ${item.title} | urgencia ${item.urgency} | impacto ${item.impact} | revisar ${dateEs(String(item.reviewDate).slice(0, 10))} | acción: ${item.action}`) : ['- No hay recomendaciones activas.']), '', '## Seguimiento de decisiones', ...(reviews.length ? reviews.slice(0, 12).map(item => `- ${item.phaseLabel} | ${item.title} | estado ${item.statusLabel} | revisión ${dateEs(String(item.reviewDate || '').slice(0, 10))} | esperado: ${item.expectedOutcome || '-'} | observado: ${item.actualOutcome || '-'} | aprendizaje: ${item.lesson || '-'}`) : ['- No hay revisiones registradas.']), '', '## Cartera', '| Empresa | Ticker | ISIN | Valor | Peso | Dividendo anual | Yield | YOC | Estado |', '|---|---|---|---:|---:|---:|---:|---:|---|', ...portfolio.map(position => `| ${position.name.replaceAll('|', '/')} | ${position.symbol} | ${position.isin} | ${eur.format(position.marketValue || 0)} | ${formatPercent(position.allocation)} | ${eur.format(position.annualDividend || 0)} | ${formatPercent(position.dividendYield)} | ${formatPercent(position.yieldOnCost)} | ${position.status} |`), '', '## Distribución por sectores', ...sector.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`), '', '## Distribución geográfica', ...country.slice(0, 8).map(item => `- ${item.name}: ${pct.format(item.weight)}`), '', '## Liquidez, activos y deuda', ...state.assets.map(asset => `- Activo ${asset.name} (${asset.type}): ${eur.format(asset.value || 0)}`), ...state.liabilities.map(liability => `- Deuda ${liability.name} (${liability.type}): ${eur.format(liability.value || 0)}`), '', '## Histórico de informes registrados', ...recentReportSummary(), '', '## Comentarios personales', '- Exportado desde la aplicación local-first. Los datos permanecen en el dispositivo.'].join('\n'); }
 async function markdown() { const portfolio = sortedPortfolio(activePortfolio()); const metrics = fullMetrics(portfolio); const score = portfolioScore(portfolio); const filename = `comite-inversion-family-office-${new Date().toISOString().slice(0, 10)}.md`; const promptTemplate = await loadAnalysisPromptTemplate(); const dataBlock = buildPortfolioDataMarkdown(); const finalDocument = mergePromptWithData(promptTemplate, dataBlock); download(filename, finalDocument, 'text/markdown'); saveReportHistoryEntry({ ...defaultReportEntry(), createdAt: new Date().toISOString(), score: score.value, netWorth: metrics.netWorth, dividends: metrics.dividends, concentrationLabel: score.concentrationLabel, filename }); saveState(); renderReportHistory(); showNotice('Informe generado con prompt editable y registrado en el histórico.'); }
 ensureAdvisoryState();
 saveState();

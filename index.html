@@ -36,6 +36,7 @@
   <nav class="nav-tabs" aria-label="Secciones">
     <button class="nav-item active" data-view="dashboard"><wa-icon name="chart-line"></wa-icon>Asesor</button>
     <button class="nav-item" data-view="portfolio"><wa-icon name="briefcase"></wa-icon>Cartera</button>
+    <button class="nav-item" data-view="options"><wa-icon name="layer-group"></wa-icon>Opciones</button>
     <button class="nav-item" data-view="history"><wa-icon name="clock-rotate-left"></wa-icon>Histórico</button>
     <button class="nav-item" data-view="plan"><wa-icon name="bullseye"></wa-icon>Plan</button>
     <button class="nav-item" data-view="settings"><wa-icon name="gear"></wa-icon>Datos</button>
@@ -113,11 +114,105 @@
         </wa-card>
       </div>
       <wa-card class="panel"><div class="panel-head"><div><h2>Libro de operaciones</h2><p>Histórico de compras y ventas importadas desde DivvyDiary</p></div></div><div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Empresa</th><th>Cantidad</th><th>Precio</th><th>Importe</th><th>Costes</th><th>Cartera</th></tr></thead><tbody id="transactionRows"><tr><td colspan="8" class="empty-cell">Importa el CSV de transacciones.</td></tr></tbody></table></div></wa-card>
-      <div class="dashboard-grid decision-grid">
-        <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Operativa con opciones</h2><p>Registro manual de puts, primas y capital comprometido</p></div></div><form id="optionForm" class="stack-form"><div class="inline-form"><wa-input id="optionUnderlying" label="Subyacente"></wa-input><wa-input id="optionTicker" label="Ticker"></wa-input><wa-input id="optionIsin" label="ISIN"></wa-input></div><div class="inline-form"><wa-select id="optionType" label="Tipo" value="put"><wa-option value="put">Put</wa-option><wa-option value="call">Call</wa-option></wa-select><wa-select id="optionStrategy" label="Estrategia" value="cash-secured-put"><wa-option value="cash-secured-put">Venta de put</wa-option><wa-option value="covered-call">Covered call</wa-option><wa-option value="other">Otra</wa-option></wa-select><wa-select id="optionObjective" label="Objetivo" value="acquire"><wa-option value="acquire">Adquirir acciones</wa-option><wa-option value="income">Generar primas</wa-option></wa-select></div><div class="inline-form"><wa-input id="optionOpenedAt" label="Apertura" type="date"></wa-input><wa-input id="optionExpiration" label="Vencimiento" type="date"></wa-input><wa-input id="optionStrike" label="Strike" inputmode="decimal"></wa-input></div><div class="inline-form"><wa-input id="optionContracts" label="Contratos" inputmode="numeric"></wa-input><wa-input id="optionMultiplier" label="Multiplicador" inputmode="numeric"></wa-input><wa-input id="optionPremiumPerShare" label="Prima por acción" inputmode="decimal"></wa-input></div><div class="inline-form"><wa-input id="optionFees" label="Comisiones" inputmode="decimal"></wa-input><wa-input id="optionCollateral" label="Garantía reservada" inputmode="decimal"></wa-input><wa-select id="optionStatus" label="Estado" value="open"><wa-option value="open">Abierta</wa-option><wa-option value="closed">Cerrada</wa-option><wa-option value="expired">Vencida sin valor</wa-option><wa-option value="assigned">Asignada</wa-option><wa-option value="rolled">Rolada</wa-option></wa-select></div><wa-textarea id="optionThesis" label="Tesis y riesgo" rows="3"></wa-textarea><wa-button type="submit" variant="brand">Añadir operación</wa-button></form></wa-card>
-        <wa-card class="panel"><div class="panel-head"><div><h2>Resumen de opciones</h2><p>Liquidez comprometida, primas y exposición potencial</p></div></div><div id="optionSummary" class="summary-stack empty-state">Sin operaciones registradas.</div></wa-card>
+      <wa-card class="panel"><div class="panel-head"><div><h2>Opciones sobre estas acciones</h2><p>El analizador, el registro y el seguimiento de opciones tienen su propia sección</p></div><wa-button appearance="plain" data-go="options">Ir a Opciones</wa-button></div><div id="portfolioOptionsSummary" class="summary-stack empty-state">Sin operaciones registradas.</div></wa-card>
+    </section>
+
+    <section id="options" class="view">
+      <div class="section-head"><div><p class="eyebrow">OPCIONES</p><h1>Análisis y seguimiento de opciones</h1><p>Analiza antes de operar, registra la ejecución y haz seguimiento del ciclo completo. Ningún cálculo es una recomendación de compra o venta.</p></div></div>
+      <nav class="nav-tabs sub-tabs" aria-label="Secciones de opciones">
+        <button class="nav-item sub-nav-item active" data-subview="optionsAnalyzer">Analizador</button>
+        <button class="nav-item sub-nav-item" data-subview="optionsOpenPositions">Posiciones abiertas</button>
+        <button class="nav-item sub-nav-item" data-subview="optionsHistory">Historial</button>
+        <button class="nav-item sub-nav-item" data-subview="optionsCalendar">Calendario</button>
+        <button class="nav-item sub-nav-item" data-subview="optionsStats">Estadísticas</button>
+      </nav>
+
+      <div id="optionsAnalyzer" class="option-subview active">
+        <wa-card class="panel form-panel">
+          <div class="panel-head"><div><h2>1. Subyacente</h2><p>Datos de la empresa y del contexto de mercado</p></div></div>
+          <div class="inline-form"><wa-input id="anUnderlying" label="Empresa"></wa-input><wa-input id="anTicker" label="Ticker"></wa-input><wa-input id="anIsin" label="ISIN (opcional)"></wa-input></div>
+          <div class="inline-form"><wa-input id="anUnderlyingPrice" label="Precio actual del subyacente" inputmode="decimal"></wa-input><wa-select id="anCurrency" label="Divisa" value="EUR"><wa-option value="EUR">EUR</wa-option><wa-option value="USD">USD</wa-option><wa-option value="GBP">GBP</wa-option><wa-option value="CHF">CHF</wa-option></wa-select><wa-input id="anFxRate" label="Tipo de cambio a EUR" hint="1 si ya opera en EUR" inputmode="decimal"></wa-input></div>
+          <div class="inline-form"><wa-input id="anImpliedVol" label="Volatilidad implícita (opcional, ej. 0,35)" inputmode="decimal"></wa-input><wa-input id="anEarningsDate" label="Fecha de resultados (opcional)" type="date"></wa-input><wa-input id="anExDivDate" label="Fecha ex-dividendo (opcional)" type="date"></wa-input></div>
+          <div class="inline-form"><wa-input id="anExpectedDividend" label="Dividendo esperado por acción (opcional)" inputmode="decimal"></wa-input><wa-input id="anSector" label="Sector"></wa-input><wa-input id="anCountry" label="País"></wa-input></div>
+          <div class="inline-form"><wa-input id="anSharesOwned" label="Acciones ya en cartera" hint="Se detecta automáticamente si el ISIN o ticker coincide con una posición" inputmode="numeric"></wa-input><wa-input id="anAvgCost" label="Precio medio de esas acciones" inputmode="decimal"></wa-input><div id="anLinkedInfo" class="muted-copy"></div></div>
+
+          <div class="panel-head"><div><h2>2. Contrato</h2><p>Tipo de operación y datos del contrato</p></div></div>
+          <div class="inline-form"><wa-select id="anOptionType" label="Tipo" value="put"><wa-option value="put">Put</wa-option><wa-option value="call">Call</wa-option></wa-select><wa-select id="anSide" label="Acción" value="sell"><wa-option value="sell">Vender</wa-option><wa-option value="buy">Comprar</wa-option></wa-select><wa-select id="anStrategy" label="Estrategia" value="cash-secured-put"><wa-option value="cash-secured-put">Cash-secured put</wa-option><wa-option value="naked-put">Naked put</wa-option><wa-option value="covered-call">Covered call</wa-option><wa-option value="naked-call">Naked call</wa-option><wa-option value="long-call">Long call</wa-option><wa-option value="long-put">Long put</wa-option><wa-option value="other">Otra</wa-option></wa-select></div>
+          <div class="inline-form"><wa-input id="anStrike" label="Strike" inputmode="decimal"></wa-input><wa-input id="anExpiration" label="Vencimiento" type="date"></wa-input><wa-input id="anOpenedAt" label="Apertura" type="date"></wa-input></div>
+          <div class="inline-form"><wa-input id="anPremiumBid" label="Prima bid (opcional)" inputmode="decimal"></wa-input><wa-input id="anPremiumAsk" label="Prima ask (opcional)" inputmode="decimal"></wa-input><wa-input id="anPremiumPerShare" label="Prima por acción (manual)" inputmode="decimal"></wa-input></div>
+          <div class="inline-form"><wa-input id="anContracts" label="Contratos" value="1" inputmode="numeric"></wa-input><wa-input id="anMultiplier" label="Multiplicador" value="100" inputmode="numeric"></wa-input><wa-input id="anFees" label="Comisión estimada" inputmode="decimal"></wa-input></div>
+          <div class="inline-form"><wa-input id="anCollateral" label="Garantía reservada (opcional)" hint="Vacío = strike x acciones" inputmode="decimal"></wa-input><wa-input id="anLimitPrice" label="Precio límite de la orden (opcional)" inputmode="decimal"></wa-input><wa-input id="anDelta" label="Delta (opcional, -1 a 1)" inputmode="decimal"></wa-input></div>
+          <div class="inline-form"><wa-input id="anMarginRequired" label="Margen requerido (solo calls sin cobertura)" inputmode="decimal"></wa-input><wa-checkbox id="anAcceptsUncoveredRisk">Acepto el riesgo ilimitado de una call sin cobertura</wa-checkbox></div>
+
+          <div class="panel-head"><div><h2>3. Objetivo y tesis</h2><p>Por qué haces esta operación</p></div></div>
+          <div class="inline-form"><wa-select id="anObjective" label="Objetivo" value="income"><wa-option value="buy_lower">Comprar acciones más baratas</wa-option><wa-option value="income">Generar prima</wa-option><wa-option value="protect">Proteger una posición</wa-option><wa-option value="speculate_up">Especular con subida</wa-option><wa-option value="speculate_down">Especular con bajada</wa-option><wa-option value="reduce_risk">Reducir riesgo</wa-option><wa-option value="other">Otro</wa-option></wa-select><wa-checkbox id="anAssignmentAccepted" checked>Acepto la asignación si ocurre</wa-checkbox></div>
+          <wa-textarea id="anThesis" label="Tesis de inversión" rows="2"></wa-textarea>
+          <wa-textarea id="anRisks" label="Riesgos identificados" rows="2"></wa-textarea>
+          <wa-textarea id="anExitPlan" label="Plan de salida" rows="2"></wa-textarea>
+          <div class="inline-actions"><wa-button id="anAnalyzeBtn" variant="brand"><wa-icon slot="start" name="calculator"></wa-icon>Analizar</wa-button></div>
+        </wa-card>
+
+        <wa-card class="panel" id="anResultsCard" hidden>
+          <div class="panel-head"><div><h2>Resultado del análisis</h2><p id="anResultsSubtitle"></p></div></div>
+          <div id="anResultsSummary" class="preview-kpis"></div>
+          <div id="anProbability" class="summary-stack"></div>
+          <div class="dashboard-grid">
+            <div>
+              <h3>Payoff al vencimiento</h3>
+              <div id="anPayoffChart" class="history-chart empty-state">Sin datos</div>
+              <div class="payoff-legend"><span>▬ Actual (gris)</span><span>▬ Strike (naranja)</span><span>● Breakeven</span></div>
+            </div>
+            <div>
+              <h3>Puntuación de la operación</h3>
+              <div id="anScoreTotal" class="score-ring">0</div>
+              <div id="anScoreBreakdown" class="score-breakdown"></div>
+            </div>
+          </div>
+          <h3>Semáforo de riesgo</h3>
+          <div id="anTrafficLight" class="signal-list"></div>
+          <h3>Interpretación</h3>
+          <div id="anRecommendation" class="summary-stack"></div>
+          <wa-callout variant="warning">Estimaciones basadas en los datos introducidos. No representan una recomendación de compra o venta ni una probabilidad garantizada.</wa-callout>
+          <div class="inline-actions"><wa-button id="anSaveProposalBtn" appearance="outlined">Guardar como propuesta</wa-button><wa-button id="anSaveOpenBtn" variant="brand">Registrar como operación abierta</wa-button></div>
+        </wa-card>
+
+        <wa-card class="panel">
+          <div class="panel-head"><div><h2>Comparador de strikes</h2><p>Añade varias filas de la cadena de opciones para comparar</p></div><wa-button id="comparatorAddRowBtn" appearance="outlined" size="small">Añadir fila</wa-button></div>
+          <div class="table-wrap strike-comparator-table"><table><thead><tr><th>Strike</th><th>Prima</th><th>Vencimiento</th><th>Breakeven</th><th>Descuento</th><th>Rentabilidad</th><th>Anualizada</th><th>Capital</th><th>Prob. aprox.</th><th></th></tr></thead><tbody id="comparatorRows"><tr><td colspan="10" class="empty-cell">Añade filas para comparar strikes.</td></tr></tbody></table></div>
+          <div class="inline-actions"><small class="muted-copy">Ordenar por:</small><wa-select id="comparatorSort" value=""><wa-option value="">Como se añadieron</wa-option><wa-option value="discount">Mayor descuento</wa-option><wa-option value="premium">Mayor prima</wa-option><wa-option value="return">Mayor rentabilidad</wa-option><wa-option value="probability">Menor probabilidad de asignación</wa-option></wa-select></div>
+        </wa-card>
       </div>
-      <wa-card class="panel"><div class="panel-head"><div><h2>Posiciones en opciones</h2><p>Control de vencimientos, asignaciones y disciplina operativa</p></div></div><div class="table-wrap"><table><thead><tr><th>Subyacente</th><th>Tipo</th><th>Objetivo</th><th>Vencimiento</th><th>Prima neta</th><th>Capital comprometido</th><th>Estado</th><th></th></tr></thead><tbody id="optionRows"><tr><td colspan="8" class="empty-cell">No hay posiciones en opciones.</td></tr></tbody></table></div></wa-card>
+
+      <div id="optionsOpenPositions" class="option-subview">
+        <wa-card class="panel"><div class="panel-head"><div><h2>Liquidez y opciones</h2><p>Impacto de las posiciones abiertas sobre la caja disponible</p></div></div><div id="optionsLiquidityBreakdown" class="preview-kpis"></div></wa-card>
+        <wa-card class="panel"><div class="panel-head"><div><h2>Posiciones abiertas</h2><p>Control de vencimientos, asignaciones y disciplina operativa</p></div></div><div class="table-wrap"><table><thead><tr><th>Subyacente</th><th>Tipo</th><th>Estrategia</th><th>Vencimiento</th><th>Prima neta</th><th>Capital comprometido</th><th>Estado</th><th></th></tr></thead><tbody id="optionRows"><tr><td colspan="8" class="empty-cell">No hay posiciones en opciones.</td></tr></tbody></table></div></wa-card>
+      </div>
+
+      <div id="optionsHistory" class="option-subview">
+        <wa-card class="panel"><div class="panel-head"><div><h2>Historial de operaciones</h2><p>Cerradas, vencidas, asignadas, ejercidas, roladas o canceladas</p></div></div><div class="table-wrap"><table><thead><tr><th>Subyacente</th><th>Estrategia</th><th>Estado</th><th>Apertura</th><th>Cierre</th><th>Resultado</th><th></th></tr></thead><tbody id="optionHistoryRows"><tr><td colspan="7" class="empty-cell">Sin operaciones cerradas todavía.</td></tr></tbody></table></div></wa-card>
+        <wa-card class="panel"><div class="panel-head"><div><h2>Revisión de decisiones sobre opciones</h2><p>Revisión a 3, 6 y 12 meses de cada operación cerrada</p></div></div><div class="table-wrap"><table><thead><tr><th>Operación</th><th>Fase</th><th>Revisión</th><th>Estado</th><th>Aprendizaje</th></tr></thead><tbody id="optionDecisionRows"><tr><td colspan="5" class="empty-cell">Sin revisiones todavía.</td></tr></tbody></table></div></wa-card>
+      </div>
+
+      <div id="optionsCalendar" class="option-subview">
+        <wa-card class="panel"><div class="panel-head"><div><h2>Calendario</h2><p>Vencimientos, resultados, ex-dividendos y revisiones ordenados por fecha</p></div></div><div id="optionsCalendarRows" class="signal-list empty-state">Sin eventos próximos.</div></wa-card>
+      </div>
+
+      <div id="optionsStats" class="option-subview">
+        <div class="kpi-grid">
+          <article class="kpi"><span>Primas netas cobradas</span><strong id="statPremiumNet">0 EUR</strong><small id="statPremiumGross">Brutas: 0 EUR</small></article>
+          <article class="kpi"><span>Resultado realizado</span><strong id="statRealized">0 EUR</strong><small id="statRealizedMeta">Ganadoras vs. perdedoras</small></article>
+          <article class="kpi"><span>Porcentaje de éxito</span><strong id="statWinRate">--</strong><small id="statWinRateMeta">No es el único indicador de calidad</small></article>
+          <article class="kpi"><span>Capital medio comprometido</span><strong id="statAvgCapital">0 EUR</strong><small id="statAvgDays">Días medios por operación: 0</small></article>
+        </div>
+        <div class="dashboard-grid">
+          <wa-card class="panel"><div class="panel-head"><div><h2>Resultado por estrategia</h2></div></div><div id="statByStrategy" class="signal-list empty-state">Sin datos</div></wa-card>
+          <wa-card class="panel"><div class="panel-head"><div><h2>Resultado por subyacente</h2></div></div><div id="statByUnderlying" class="signal-list empty-state">Sin datos</div></wa-card>
+        </div>
+        <div class="dashboard-grid">
+          <wa-card class="panel"><div class="panel-head"><div><h2>Resultado por año</h2></div></div><div id="statByYear" class="signal-list empty-state">Sin datos</div></wa-card>
+          <wa-card class="panel"><div class="panel-head"><div><h2>Resultado por divisa</h2></div></div><div id="statByCurrency" class="signal-list empty-state">Sin datos</div></wa-card>
+        </div>
+      </div>
     </section>
 
     <section id="history" class="view">
@@ -210,6 +305,20 @@
     </div>
     <wa-button slot="footer" id="cancelTransactionsBtn" appearance="plain">Cancelar</wa-button>
     <wa-button slot="footer" id="confirmTransactionsBtn" variant="brand" hidden>Confirmar importación</wa-button>
+  </wa-dialog>
+
+  <wa-dialog id="optionActionDialog" label="Gestionar operación" light-dismiss>
+    <p id="optionActionSummary" class="muted-copy"></p>
+    <wa-select id="optionActionType" label="Acción"><wa-option value="close">Cerrar anticipadamente</wa-option><wa-option value="expired">Vencida sin valor</wa-option><wa-option value="assigned">Asignada (crear/ampliar posición)</wa-option><wa-option value="exercised">Ejercida (covered call: reduce posición)</wa-option><wa-option value="roll">Rolar a nuevo contrato</wa-option><wa-option value="cancelled">Cancelar propuesta</wa-option></wa-select>
+    <div id="optionActionCloseFields"><div class="inline-form"><wa-input id="optionActionDate" label="Fecha" type="date"></wa-input><wa-input id="optionActionPremium" label="Prima de recompra/venta por acción" inputmode="decimal"></wa-input><wa-input id="optionActionFees" label="Comisiones" inputmode="decimal"></wa-input></div><wa-input id="optionActionReason" label="Motivo del cierre"></wa-input></div>
+    <div id="optionActionRollFields" hidden>
+      <h3>Nuevo contrato</h3>
+      <div class="inline-form"><wa-input id="rollStrike" label="Nuevo strike" inputmode="decimal"></wa-input><wa-input id="rollExpiration" label="Nuevo vencimiento" type="date"></wa-input><wa-input id="rollPremiumPerShare" label="Nueva prima por acción" inputmode="decimal"></wa-input></div>
+      <div class="inline-form"><wa-input id="rollContracts" label="Contratos" inputmode="numeric"></wa-input><wa-input id="rollFees" label="Comisiones apertura" inputmode="decimal"></wa-input></div>
+    </div>
+    <wa-callout id="optionActionNetResult" variant="brand" hidden></wa-callout>
+    <wa-button slot="footer" id="cancelOptionActionBtn" appearance="plain">Cancelar</wa-button>
+    <wa-button slot="footer" id="confirmOptionActionBtn" variant="brand">Confirmar</wa-button>
   </wa-dialog>
 
   <wa-dialog id="monthlyCloseDialog" label="Cierre mensual" light-dismiss>

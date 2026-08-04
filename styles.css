@@ -187,6 +187,81 @@ body {
   display: block;
 }
 
+.sub-tabs {
+  position: static;
+  background: transparent;
+  backdrop-filter: none;
+  border-bottom: 1px solid var(--border);
+  padding: 0 0 10px;
+  margin-bottom: 18px;
+  top: auto;
+  z-index: auto;
+}
+
+.option-subview {
+  display: none;
+}
+
+.option-subview.active {
+  display: block;
+}
+
+.payoff-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.score-breakdown {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.score-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+}
+
+.score-row .score-label {
+  flex: 1;
+  color: var(--gray-ink);
+}
+
+.score-row .score-bar {
+  width: 90px;
+  height: 8px;
+  border-radius: 6px;
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+
+.score-row .score-bar span {
+  display: block;
+  height: 100%;
+  background: var(--orange);
+}
+
+.score-row .score-value {
+  width: 34px;
+  text-align: right;
+  font-weight: 700;
+  color: var(--slate-deep);
+}
+
+.strike-comparator-table input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
 .hero,
 .section-head {
   display: flex;
