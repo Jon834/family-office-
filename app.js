@@ -610,7 +610,7 @@ function sumValues(list) { return list.reduce((sum, item) => sum + (item.value |
 function ownerScaleFn(ownerId) { return record => (ownerId && ownerId !== 'all') ? ownerShareOf(record, ownerId) : 1; }
 function totals(list = activePortfolio(), ownerId = state.viewOwnerId) { const scale = ownerScaleFn(ownerId); const value = list.reduce((sum, position) => sum + (position.marketValue || 0) * scale(position), 0); const cost = list.reduce((sum, position) => sum + (position.totalCost || 0) * scale(position), 0); const dividends = list.reduce((sum, position) => sum + (position.annualDividend || 0) * scale(position), 0); const gain = value - cost; return { value, cost, dividends, gain, yield: value ? dividends / value : 0, yoc: cost ? dividends / cost : 0, count: list.length }; }
 function assetTotals(ownerId = state.viewOwnerId) { const scale = ownerScaleFn(ownerId); const ownedAssets = ownerFilteredList(state.assets, ownerId); const ownedLiabilities = ownerFilteredList(state.liabilities, ownerId); const assets = ownedAssets.reduce((sum, asset) => sum + (asset.value || 0) * scale(asset), 0); const liabilities = ownedLiabilities.reduce((sum, liability) => sum + (liability.value || 0) * scale(liability), 0); const liquidity = ownedAssets.filter(asset => ['cash', 'money-market', 'treasury'].includes(asset.type)).reduce((sum, asset) => sum + (asset.value || 0) * scale(asset), 0); return { assets, liabilities, liquidity, otherAssets: assets - liquidity }; }
-function fullMetrics(portfolio = activePortfolio()) { const portfolioTotals = totals(portfolio); const other = assetTotals(); const netWorth = portfolioTotals.value + other.assets - other.liabilities; const dividendGoal = state.settings.targetAnnualDividends || null; const netWorthGoal = state.settings.targetNetWorth || null; return { ...portfolioTotals, liquidity: other.liquidity, otherAssets: other.otherAssets, liabilities: other.liabilities, netWorth, dividendGoalProgress: dividendGoal ? portfolioTotals.dividends / dividendGoal : null, netWorthGoalProgress: netWorthGoal ? netWorth / netWorthGoal : null }; }
+function fullMetrics(portfolio = activePortfolio()) { const portfolioTotals = totals(portfolio); const estimate = portfolioEstimateContribution(); const value = portfolioTotals.value + estimate.value; const cost = portfolioTotals.cost + estimate.cost; const dividends = portfolioTotals.dividends + estimate.dividends; const gain = value - cost; const other = assetTotals(); const netWorth = value + other.assets - other.liabilities; const dividendGoal = state.settings.targetAnnualDividends || null; const netWorthGoal = state.settings.targetNetWorth || null; return { ...portfolioTotals, value, cost, dividends, gain, yield: value ? dividends / value : 0, yoc: cost ? dividends / cost : 0, liquidity: other.liquidity, otherAssets: other.otherAssets, liabilities: other.liabilities, netWorth, estimateContribution: estimate, hasEstimate: estimate.owners.length > 0, dividendGoalProgress: dividendGoal ? dividends / dividendGoal : null, netWorthGoalProgress: netWorthGoal ? netWorth / netWorthGoal : null }; }
 function groupByValue(list, field, totalValue) { const map = {}; list.forEach(position => { const key = position[field] || 'Sin clasificar'; map[key] = (map[key] || 0) + (position.marketValue || 0); }); return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value, weight: totalValue ? value / totalValue : 0 })); }
 function concentrationState(weight, green, amber) { if (weight < green) return { tone: 'good', label: 'Controlada' }; if (weight < amber) return { tone: 'warn', label: 'Vigilar' }; return { tone: 'risk', label: 'Alta' }; }
 function concentrationSignals(portfolio = activePortfolio()) {
@@ -1076,7 +1076,7 @@ function renderHistory() {
 }
 function renderAssets() { const rows = sortRows(visibleAssets(), 'assets'); $('#assetRows').innerHTML = rows.length ? rows.map(asset => `<tr><td>${escapeHtml(asset.name)}<br><small class="owner-tag">${escapeHtml(ownerLabel(asset))}</small></td><td>${escapeHtml(asset.type)}</td><td>${eur.format(asset.value || 0)}</td><td>${escapeHtml(asset.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-asset="${asset.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay activos adicionales.</td></tr>'; }
 function renderLiabilities() { const rows = sortRows(visibleLiabilities(), 'liabilities'); $('#liabilityRows').innerHTML = rows.length ? rows.map(liability => `<tr><td>${escapeHtml(liability.name)}<br><small class="owner-tag">${escapeHtml(ownerLabel(liability))}</small></td><td>${escapeHtml(liability.type)}</td><td>${eur.format(liability.value || 0)}</td><td>${escapeHtml(liability.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-liability="${liability.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay deudas registradas.</td></tr>'; }
-function renderSettings() { $('#monthlyExpenseInput').value = formatInputNumber(state.settings.monthlyExpense); $('#targetDividendInput').value = formatInputNumber(state.settings.targetAnnualDividends); $('#targetNetWorthInput').value = formatInputNumber(state.settings.targetNetWorth); $('#monthlyContributionInput').value = formatInputNumber(state.settings.monthlyContribution); if ($('#ownerName1')) { $('#ownerName1').value = ownerName('owner-1'); $('#ownerName2').value = ownerName('owner-2'); $('#ownerNameFamily').value = ownerName('owner-family'); } }
+function renderSettings() { $('#monthlyExpenseInput').value = formatInputNumber(state.settings.monthlyExpense); $('#targetDividendInput').value = formatInputNumber(state.settings.targetAnnualDividends); $('#targetNetWorthInput').value = formatInputNumber(state.settings.targetNetWorth); $('#monthlyContributionInput').value = formatInputNumber(state.settings.monthlyContribution); if ($('#ownerName1')) { $('#ownerName1').value = ownerName('owner-1'); $('#ownerName2').value = ownerName('owner-2'); $('#ownerNameFamily').value = ownerName('owner-family'); } renderPortfolioEstimateRows(); }
 function saveOwnerNames(event) {
   event.preventDefault();
   state.ownerNames = migrateOwnerNames({
@@ -1087,6 +1087,31 @@ function saveOwnerNames(event) {
   saveState();
   render();
   showNotice('Nombres de propietarios guardados.');
+}
+function renderPortfolioEstimateRows() {
+  const rows = $('#portfolioEstimateRows');
+  if (!rows) return;
+  const ids = ['owner-2', 'owner-family'].filter(id => state.portfolioEstimates[id]);
+  rows.innerHTML = ids.length ? ids.map(id => {
+    const est = state.portfolioEstimates[id];
+    const active = ownerEstimateInUse(id);
+    return `<tr><td>${escapeHtml(ownerName(id))}</td><td>${eur.format(est.value || 0)}</td><td>${eur.format(est.cost || 0)}</td><td>${formatPercent(est.dividendYield || 0)}</td><td>${active ? 'Activa (sin cartera real)' : 'Inactiva (ya hay cartera real importada)'}</td><td><wa-button size="small" appearance="plain" data-delete-estimate="${id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`;
+  }).join('') : '<tr><td colspan="6" class="empty-cell">Sin estimaciones guardadas.</td></tr>';
+}
+function savePortfolioEstimate(event) {
+  event.preventDefault();
+  const ownerId = $('#estimateOwner')?.value || 'owner-2';
+  const value = parseLocaleNumber($('#estimateValue')?.value);
+  if (!value || value <= 0) { showNotice('Indica un valor de cartera válido.'); return; }
+  const cost = parseLocaleNumber($('#estimateCost')?.value);
+  const dividendYield = parsePercent($('#estimateYield')?.value);
+  state.portfolioEstimates[ownerId] = migratePortfolioEstimate({ value, cost, dividendYield, updatedAt: new Date().toISOString() });
+  saveState();
+  $('#estimateValue').value = '';
+  $('#estimateCost').value = '';
+  $('#estimateYield').value = '';
+  render();
+  showNotice('Estimación de cartera guardada.');
 }
 function renderUndoState() { const hasUndo = Boolean(state.lastImportUndo?.snapshot); ['#undoImportBtn', '#undoImportSettingsBtn'].forEach(selector => { const button = $(selector); if (!button) return; if (selector === '#undoImportBtn') button.hidden = !hasUndo; button.disabled = !hasUndo; }); $('#undoHelpText').textContent = hasUndo ? `Disponible la copia previa creada el ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(state.lastImportUndo.createdAt))}.` : 'No hay ninguna importación reciente para revertir.'; }
 function renderBackupStatus() { $('#backupStatus').textContent = state.lastBackupAt ? `Última copia automática: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(state.lastBackupAt))}.` : 'Todavía no se ha generado ninguna copia automática previa a importación.'; }
@@ -1517,6 +1542,7 @@ bindOwnershipToggle('asset');
 bindOwnershipToggle('liability');
 $('#settingsForm')?.addEventListener('submit', saveFinancialSettings);
 $('#ownersForm')?.addEventListener('submit', saveOwnerNames);
+$('#portfolioEstimateForm')?.addEventListener('submit', savePortfolioEstimate);
 $('#exportJsonBtn')?.addEventListener('click', exportJson);
 $('#restoreJsonBtn')?.addEventListener('click', () => $('#jsonFile').click());
 $('#jsonFile')?.addEventListener('change', event => {
@@ -1601,6 +1627,18 @@ document.addEventListener('click', event => {
       saveState();
       render();
       showNotice('Activo eliminado.');
+    });
+    return;
+  }
+  const deleteEstimateButton = event.target.closest('[data-delete-estimate]');
+  if (deleteEstimateButton) {
+    const ownerId = deleteEstimateButton.dataset.deleteEstimate;
+    if (!state.portfolioEstimates[ownerId]) return;
+    askConfirm(`Eliminar la estimación de cartera de ${ownerName(ownerId)}.`, () => {
+      delete state.portfolioEstimates[ownerId];
+      saveState();
+      render();
+      showNotice('Estimación eliminada.');
     });
     return;
   }
@@ -2351,9 +2389,12 @@ function computeOwnerBreakdown() {
   return OWNER_IDS.map(ownerId => {
     const positions = ownerFilteredList(state.portfolio, ownerId).filter(position => ACTIVE_STATUSES.has(normalizeStatus(position.status)));
     const portfolioTotals = totals(positions, ownerId);
+    const estimate = portfolioEstimateContribution(ownerId);
+    const portfolioValue = portfolioTotals.value + estimate.value;
+    const dividends = portfolioTotals.dividends + estimate.dividends;
     const other = assetTotals(ownerId);
-    const netWorth = portfolioTotals.value + other.assets - other.liabilities;
-    return { ownerId, name: ownerName(ownerId), portfolioValue: portfolioTotals.value, dividends: portfolioTotals.dividends, assets: other.assets, liabilities: other.liabilities, netWorth };
+    const netWorth = portfolioValue + other.assets - other.liabilities;
+    return { ownerId, name: ownerName(ownerId), portfolioValue, dividends, assets: other.assets, liabilities: other.liabilities, netWorth, isEstimate: estimate.owners.length > 0 };
   });
 }
 function renderOwnerBreakdown() {
@@ -2365,7 +2406,7 @@ function renderOwnerBreakdown() {
   if (!isConsolidated) return;
   const breakdown = computeOwnerBreakdown();
   rows.className = 'scenario-list';
-  rows.innerHTML = breakdown.map(item => `<div class="scenario-card"><strong>${escapeHtml(item.name)}</strong><span>${eur.format(item.netWorth)}</span><small>Cartera: ${eur.format(item.portfolioValue)} | Dividendos: ${eur.format(item.dividends)}</small><small>Otros activos: ${eur.format(item.assets)} | Deuda: ${eur.format(item.liabilities)}</small></div>`).join('');
+  rows.innerHTML = breakdown.map(item => `<div class="scenario-card"><strong>${escapeHtml(item.name)}</strong><span>${eur.format(item.netWorth)}</span><small>Cartera: ${eur.format(item.portfolioValue)}${item.isEstimate ? ' (estimado)' : ''} | Dividendos: ${eur.format(item.dividends)}</small><small>Otros activos: ${eur.format(item.assets)} | Deuda: ${eur.format(item.liabilities)}</small>${item.isEstimate ? '<small class="owner-tag">Cartera estimada, sin importación real</small>' : ''}</div>`).join('');
 }
 function renderDashboard() {
   const portfolio = activePortfolio();
@@ -2535,8 +2576,40 @@ function ownerLabel(record) {
   if (ownership.length === 1 && ownership[0].pct >= 0.999) return ownerName(ownership[0].ownerId);
   return ownership.map(entry => `${ownerName(entry.ownerId)} ${Math.round(entry.pct * 100)}%`).join(' · ');
 }
-function defaultState() { return { schemaVersion: SCHEMA_VERSION, portfolio: [], transactions: [], options: [], recommendations: [], decisionReviews: [], advisor: { ...defaultAdvisorState(DEFAULT_SETTINGS) }, plan: defaultPlanState(), history: [], backups: [], assets: [], liabilities: [], reportHistory: [], settings: { ...DEFAULT_SETTINGS }, tableSorts: defaultTableSorts(), ownerNames: defaultOwnerNames(), viewOwnerId: 'all', lastImport: null, lastTransactionsImport: null, lastBackupAt: null, lastImportUndo: null, theme: 'light' }; }
-function migrateState(raw) { const base = defaultState(); if (!raw || typeof raw !== 'object') return base; const settings = migrateSettings(raw.settings); return { ...base, ...raw, schemaVersion: SCHEMA_VERSION, portfolio: Array.isArray(raw.portfolio) ? raw.portfolio.map(migratePosition).filter(Boolean) : [], transactions: Array.isArray(raw.transactions) ? raw.transactions.map(migrateTransaction).filter(Boolean) : [], options: Array.isArray(raw.options) ? raw.options.map(migrateOptionPosition).filter(Boolean) : [], recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.map(migrateRecommendation).filter(Boolean) : [], decisionReviews: Array.isArray(raw.decisionReviews) ? raw.decisionReviews.map(migrateDecisionReview).filter(Boolean) : [], advisor: { ...defaultAdvisorState(settings), ...(raw.advisor && typeof raw.advisor === 'object' ? raw.advisor : {}) }, plan: migratePlanState(raw.plan), history: Array.isArray(raw.history) ? raw.history.map(migrateSnapshot).filter(Boolean) : [], backups: Array.isArray(raw.backups) ? raw.backups.map(migrateBackup).filter(Boolean).slice(0, 10) : [], assets: Array.isArray(raw.assets) ? raw.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(raw.liabilities) ? raw.liabilities.map(migrateLiability).filter(Boolean) : [], reportHistory: Array.isArray(raw.reportHistory) ? raw.reportHistory.map(migrateReportEntry).filter(Boolean).slice(0, 24) : [], settings, tableSorts: migrateTableSorts(raw.tableSorts), ownerNames: migrateOwnerNames(raw.ownerNames), viewOwnerId: OWNER_IDS.includes(raw.viewOwnerId) || raw.viewOwnerId === 'all' ? raw.viewOwnerId : 'all', lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null, lastTransactionsImport: raw.lastTransactionsImport || null, theme: raw.theme === 'dark' ? 'dark' : 'light' }; }
+function defaultPortfolioEstimate() { return { value: null, cost: null, dividendYield: null, updatedAt: null }; }
+function migratePortfolioEstimate(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = toNum(raw.value, null);
+  if (value === null) return null;
+  return { value, cost: toNum(raw.cost, null), dividendYield: toNum(raw.dividendYield, null), updatedAt: raw.updatedAt || new Date().toISOString() };
+}
+function migratePortfolioEstimates(raw) {
+  const next = {};
+  if (raw && typeof raw === 'object') OWNER_IDS.forEach(id => { const migrated = migratePortfolioEstimate(raw[id]); if (migrated) next[id] = migrated; });
+  return next;
+}
+function ownerHasRealPortfolio(ownerId) {
+  return state.portfolio.some(position => ownerShareOf(position, ownerId) > 0 && ACTIVE_STATUSES.has(normalizeStatus(position.status)));
+}
+function ownerEstimateInUse(ownerId) {
+  return Boolean(state.portfolioEstimates[ownerId]) && !ownerHasRealPortfolio(ownerId);
+}
+function portfolioEstimateContribution(ownerId = state.viewOwnerId) {
+  const empty = { value: 0, cost: 0, dividends: 0, owners: [] };
+  if (!ownerId) return empty;
+  const ids = ownerId === 'all' ? OWNER_IDS : [ownerId];
+  return ids.reduce((sum, id) => {
+    if (!ownerEstimateInUse(id)) return sum;
+    const est = state.portfolioEstimates[id];
+    sum.value += est.value;
+    sum.cost += est.cost || 0;
+    sum.dividends += est.value * (est.dividendYield || 0);
+    sum.owners.push(id);
+    return sum;
+  }, { value: 0, cost: 0, dividends: 0, owners: [] });
+}
+function defaultState() { return { schemaVersion: SCHEMA_VERSION, portfolio: [], transactions: [], options: [], recommendations: [], decisionReviews: [], advisor: { ...defaultAdvisorState(DEFAULT_SETTINGS) }, plan: defaultPlanState(), history: [], backups: [], assets: [], liabilities: [], reportHistory: [], settings: { ...DEFAULT_SETTINGS }, tableSorts: defaultTableSorts(), ownerNames: defaultOwnerNames(), viewOwnerId: 'all', portfolioEstimates: {}, lastImport: null, lastTransactionsImport: null, lastBackupAt: null, lastImportUndo: null, theme: 'light' }; }
+function migrateState(raw) { const base = defaultState(); if (!raw || typeof raw !== 'object') return base; const settings = migrateSettings(raw.settings); return { ...base, ...raw, schemaVersion: SCHEMA_VERSION, portfolio: Array.isArray(raw.portfolio) ? raw.portfolio.map(migratePosition).filter(Boolean) : [], transactions: Array.isArray(raw.transactions) ? raw.transactions.map(migrateTransaction).filter(Boolean) : [], options: Array.isArray(raw.options) ? raw.options.map(migrateOptionPosition).filter(Boolean) : [], recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.map(migrateRecommendation).filter(Boolean) : [], decisionReviews: Array.isArray(raw.decisionReviews) ? raw.decisionReviews.map(migrateDecisionReview).filter(Boolean) : [], advisor: { ...defaultAdvisorState(settings), ...(raw.advisor && typeof raw.advisor === 'object' ? raw.advisor : {}) }, plan: migratePlanState(raw.plan), history: Array.isArray(raw.history) ? raw.history.map(migrateSnapshot).filter(Boolean) : [], backups: Array.isArray(raw.backups) ? raw.backups.map(migrateBackup).filter(Boolean).slice(0, 10) : [], assets: Array.isArray(raw.assets) ? raw.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(raw.liabilities) ? raw.liabilities.map(migrateLiability).filter(Boolean) : [], reportHistory: Array.isArray(raw.reportHistory) ? raw.reportHistory.map(migrateReportEntry).filter(Boolean).slice(0, 24) : [], settings, tableSorts: migrateTableSorts(raw.tableSorts), ownerNames: migrateOwnerNames(raw.ownerNames), viewOwnerId: OWNER_IDS.includes(raw.viewOwnerId) || raw.viewOwnerId === 'all' ? raw.viewOwnerId : 'all', portfolioEstimates: migratePortfolioEstimates(raw.portfolioEstimates), lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null, lastTransactionsImport: raw.lastTransactionsImport || null, theme: raw.theme === 'dark' ? 'dark' : 'light' }; }
 function cloneSnapshot() { return JSON.parse(JSON.stringify({ portfolio: state.portfolio, transactions: state.transactions, options: state.options, recommendations: state.recommendations, decisionReviews: state.decisionReviews, advisor: state.advisor, history: state.history, assets: state.assets, liabilities: state.liabilities, reportHistory: state.reportHistory, settings: state.settings, lastImport: state.lastImport, lastTransactionsImport: state.lastTransactionsImport, lastBackupAt: state.lastBackupAt })); }
 function decisionReviewsRows() { return sortRows((state.decisionReviews || []).map(migrateDecisionReview).filter(Boolean), 'decisionReviews'); }
 function dueReviewCount() { const today = new Date().toISOString().slice(0, 10); return decisionReviewsRows().filter(item => item.reviewDate && item.reviewDate <= today && ['pending', 'reviewing'].includes(item.status)).length; }
