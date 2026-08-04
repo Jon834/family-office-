@@ -448,6 +448,13 @@ td {
   margin-top: 3px;
 }
 
+.owner-tag {
+  display: inline-block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  margin-top: 2px;
+}
+
 .positive {
   color: var(--success);
 }

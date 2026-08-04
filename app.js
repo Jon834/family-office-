@@ -8,6 +8,8 @@ const REVIEW_PHASE_LABELS = { '3m': 'Revisión 3 meses', '6m': 'Revisión 6 mese
 const OPTION_STATUSES = ['proposal', 'open', 'closed', 'expired', 'assigned', 'exercised', 'rolled', 'cancelled'];
 const OPTION_OBJECTIVES = ['buy_lower', 'income', 'protect', 'speculate_up', 'speculate_down', 'reduce_risk', 'other'];
 const OPTION_STATUS_LABELS = { proposal: 'Propuesta', open: 'Abierta', closed: 'Cerrada', expired: 'Vencida sin valor', assigned: 'Asignada', exercised: 'Ejercida', rolled: 'Rolada', cancelled: 'Cancelada' };
+const OWNER_IDS = ['owner-1', 'owner-2', 'owner-family'];
+const DEFAULT_OWNER_NAMES = { 'owner-1': 'Yo', 'owner-2': 'Mi pareja', 'owner-family': 'Familiar conjunto' };
 const ANALYSIS_PROMPT_PATH = './chatgpt-analysis-prompt.md';
 const DEFAULT_ANALYSIS_PROMPT = [
   '# Análisis patrimonial para ChatGPT',
@@ -435,6 +437,7 @@ function migrateAsset(asset) {
     type: cleanText(asset.type) || 'other',
     value: toNum(asset.value, null),
     notes: cleanText(asset.notes),
+    ownership: migrateOwnership(asset.ownership),
     updatedAt: asset.updatedAt || new Date().toISOString()
   };
 }
@@ -449,6 +452,7 @@ function migrateLiability(liability) {
     type: cleanText(liability.type) || 'loan',
     value: toNum(liability.value, null),
     notes: cleanText(liability.notes),
+    ownership: migrateOwnership(liability.ownership),
     updatedAt: liability.updatedAt || new Date().toISOString()
   };
 }
@@ -514,6 +518,7 @@ function migratePosition(position) {
     status: normalizeStatus(position.status),
     unreliableMatch: !isin,
     fallbackKey: buildFallbackKey(symbol, name),
+    ownership: migrateOwnership(position.ownership),
     createdAt,
     updatedAt,
     archivedAt: position.archivedAt || null,
@@ -599,11 +604,12 @@ function dateEs(value) { if (!value) return '-'; const date = new Date(`${value}
 function formatPercent(value) { return value === null || value === undefined ? '-' : pct.format(value); }
 function formatCurrency(value, currency = 'EUR') { if (value === null || value === undefined) return '-'; return new Intl.NumberFormat('es-ES', { style: 'currency', currency, maximumFractionDigits: 2, useGrouping: 'always' }).format(value); }
 function relativeDelta(current, previous) { if (!previous) return null; return (current - previous) / previous; }
-function activePortfolio(list = state.portfolio) { return list.filter(position => ACTIVE_STATUSES.has(normalizeStatus(position.status))); }
+function activePortfolio(list = state.portfolio) { return ownerFilteredList(list).filter(position => ACTIVE_STATUSES.has(normalizeStatus(position.status))); }
 function sortedPortfolio(list = activePortfolio()) { return [...list].sort((a, b) => (b.marketValue || 0) - (a.marketValue || 0)); }
 function sumValues(list) { return list.reduce((sum, item) => sum + (item.value || 0), 0); }
-function totals(list = activePortfolio()) { const value = list.reduce((sum, position) => sum + (position.marketValue || 0), 0); const cost = list.reduce((sum, position) => sum + (position.totalCost || 0), 0); const dividends = list.reduce((sum, position) => sum + (position.annualDividend || 0), 0); const gain = value - cost; return { value, cost, dividends, gain, yield: value ? dividends / value : 0, yoc: cost ? dividends / cost : 0, count: list.length }; }
-function assetTotals() { const assets = sumValues(state.assets); const liabilities = sumValues(state.liabilities); const liquidity = sumValues(state.assets.filter(asset => ['cash', 'money-market', 'treasury'].includes(asset.type))); return { assets, liabilities, liquidity, otherAssets: assets - liquidity }; }
+function ownerScaleFn(ownerId) { return record => (ownerId && ownerId !== 'all') ? ownerShareOf(record, ownerId) : 1; }
+function totals(list = activePortfolio(), ownerId = state.viewOwnerId) { const scale = ownerScaleFn(ownerId); const value = list.reduce((sum, position) => sum + (position.marketValue || 0) * scale(position), 0); const cost = list.reduce((sum, position) => sum + (position.totalCost || 0) * scale(position), 0); const dividends = list.reduce((sum, position) => sum + (position.annualDividend || 0) * scale(position), 0); const gain = value - cost; return { value, cost, dividends, gain, yield: value ? dividends / value : 0, yoc: cost ? dividends / cost : 0, count: list.length }; }
+function assetTotals(ownerId = state.viewOwnerId) { const scale = ownerScaleFn(ownerId); const ownedAssets = ownerFilteredList(state.assets, ownerId); const ownedLiabilities = ownerFilteredList(state.liabilities, ownerId); const assets = ownedAssets.reduce((sum, asset) => sum + (asset.value || 0) * scale(asset), 0); const liabilities = ownedLiabilities.reduce((sum, liability) => sum + (liability.value || 0) * scale(liability), 0); const liquidity = ownedAssets.filter(asset => ['cash', 'money-market', 'treasury'].includes(asset.type)).reduce((sum, asset) => sum + (asset.value || 0) * scale(asset), 0); return { assets, liabilities, liquidity, otherAssets: assets - liquidity }; }
 function fullMetrics(portfolio = activePortfolio()) { const portfolioTotals = totals(portfolio); const other = assetTotals(); const netWorth = portfolioTotals.value + other.assets - other.liabilities; const dividendGoal = state.settings.targetAnnualDividends || null; const netWorthGoal = state.settings.targetNetWorth || null; return { ...portfolioTotals, liquidity: other.liquidity, otherAssets: other.otherAssets, liabilities: other.liabilities, netWorth, dividendGoalProgress: dividendGoal ? portfolioTotals.dividends / dividendGoal : null, netWorthGoalProgress: netWorthGoal ? netWorth / netWorthGoal : null }; }
 function groupByValue(list, field, totalValue) { const map = {}; list.forEach(position => { const key = position[field] || 'Sin clasificar'; map[key] = (map[key] || 0) + (position.marketValue || 0); }); return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value, weight: totalValue ? value / totalValue : 0 })); }
 function concentrationState(weight, green, amber) { if (weight < green) return { tone: 'good', label: 'Controlada' }; if (weight < amber) return { tone: 'warn', label: 'Vigilar' }; return { tone: 'risk', label: 'Alta' }; }
@@ -834,9 +840,16 @@ function renderPlan() {
 function reportHistoryRows() { return [...state.reportHistory].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); }
 function saveReportHistoryEntry(entry) { state.reportHistory = [entry, ...state.reportHistory].slice(0, 24); }
 function applyTheme() { document.body.classList.toggle('dark', state.theme === 'dark'); $('#themeBtn wa-icon')?.setAttribute('name', state.theme === 'dark' ? 'sun' : 'moon'); }
+function applyOwnerView() {
+  const select = $('#ownerViewSelect');
+  if (!select) return;
+  const labels = { all: 'Consolidado', 'owner-1': ownerName('owner-1'), 'owner-2': ownerName('owner-2'), 'owner-family': ownerName('owner-family') };
+  $$('#ownerViewSelect wa-option').forEach(option => { const key = option.value; if (labels[key]) option.textContent = labels[key]; });
+  select.value = state.viewOwnerId || 'all';
+}
 function renderBars(selector, data) { const element = $(selector); if (!data.length) { element.className = 'bar-chart empty-state'; element.textContent = 'Sin datos'; return; } const max = data[0].value || 1; element.className = 'bar-chart'; element.innerHTML = data.map(item => `<div class="bar-row"><span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, (item.value / max) * 100)}%"></div></div><span class="bar-value">${pct.format(item.weight)}</span></div>`).join(''); }
 function portfolioFilters() { return { query: ($('#searchInput')?.value || '').toLowerCase(), sector: $('#sectorFilter')?.value || '', country: $('#countryFilter')?.value || '', currency: $('#currencyFilter')?.value || '', status: $('#statusFilter')?.value || 'active' }; }
-function filteredPortfolio() { const { query, sector, country, currency, status } = portfolioFilters(); const rows = state.portfolio.filter(position => { const haystack = `${position.name} ${position.symbol} ${position.isin}`.toLowerCase(); const positionStatus = normalizeStatus(position.status); const statusOk = status === 'all' ? true : positionStatus === status; return (!query || haystack.includes(query)) && (!sector || position.sector === sector) && (!country || position.country === country) && (!currency || position.currency === currency) && statusOk; }); return sortRows(rows, 'portfolio'); }
+function filteredPortfolio() { const { query, sector, country, currency, status } = portfolioFilters(); const rows = ownerFilteredList(state.portfolio).filter(position => { const haystack = `${position.name} ${position.symbol} ${position.isin}`.toLowerCase(); const positionStatus = normalizeStatus(position.status); const statusOk = status === 'all' ? true : positionStatus === status; return (!query || haystack.includes(query)) && (!sector || position.sector === sector) && (!country || position.country === country) && (!currency || position.currency === currency) && statusOk; }); return sortRows(rows, 'portfolio'); }
 function renderPortfolio() { const list = filteredPortfolio(); $('#portfolioRows').innerHTML = list.length ? list.map(position => `<tr><td class="company-cell"><strong>${escapeHtml(position.name)}</strong><small>${escapeHtml(position.symbol)} | ${escapeHtml(position.isin || 'Sin ISIN')}</small></td><td>${position.quantity === null ? '-' : num.format(position.quantity)}</td><td>${formatCurrency(position.averagePrice, position.currency)}</td><td>${formatCurrency(position.currentPrice, position.currency)}</td><td>${formatCurrency(position.marketValue, position.currency)}</td><td class="${(position.gain || 0) >= 0 ? 'positive' : 'negative'}">${formatCurrency(position.gain, position.currency)}<br><small>${formatPercent(position.gainPercent)}</small></td><td>${formatPercent(position.allocation)}</td><td>${formatCurrency(position.annualDividend, position.currency)}</td><td>${formatPercent(position.dividendYield)}</td><td>${formatPercent(position.yieldOnCost)}</td><td>${dateEs(position.payDate)}</td><td><wa-button size="small" appearance="plain" data-edit-position="${position.id}"><wa-icon name="pen-to-square"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="12" class="empty-cell">No hay resultados.</td></tr>'; }
 function renderFilters() { [['#sectorFilter', 'sector', 'Todos'], ['#countryFilter', 'country', 'Todos'], ['#currencyFilter', 'currency', 'Todas']].forEach(([selector, field, label]) => { const element = $(selector); if (!element) return; const current = element.value || ''; const values = [...new Set(state.portfolio.map(position => position[field]).filter(Boolean))].sort(); element.innerHTML = `<wa-option value="">${label}</wa-option>` + values.map(value => `<wa-option value="${escapeHtml(value)}">${escapeHtml(value)}</wa-option>`).join(''); element.value = values.includes(current) ? current : ''; }); }
 const BENCHMARK_STEPS = {
@@ -1061,9 +1074,20 @@ function renderHistory() {
     macroChips.innerHTML = macro.chips.map(chip => `<article class="macro-chip${chip.emphasis ? ' emphasis' : ''}"><strong>${escapeHtml(chip.title)}</strong><span>${escapeHtml(chip.value)}</span><small>${escapeHtml(chip.note)}</small></article>`).join('');
   }
 }
-function renderAssets() { const rows = sortRows(state.assets, 'assets'); $('#assetRows').innerHTML = rows.length ? rows.map(asset => `<tr><td>${escapeHtml(asset.name)}</td><td>${escapeHtml(asset.type)}</td><td>${eur.format(asset.value || 0)}</td><td>${escapeHtml(asset.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-asset="${asset.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay activos adicionales.</td></tr>'; }
-function renderLiabilities() { const rows = sortRows(state.liabilities, 'liabilities'); $('#liabilityRows').innerHTML = rows.length ? rows.map(liability => `<tr><td>${escapeHtml(liability.name)}</td><td>${escapeHtml(liability.type)}</td><td>${eur.format(liability.value || 0)}</td><td>${escapeHtml(liability.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-liability="${liability.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay deudas registradas.</td></tr>'; }
-function renderSettings() { $('#monthlyExpenseInput').value = formatInputNumber(state.settings.monthlyExpense); $('#targetDividendInput').value = formatInputNumber(state.settings.targetAnnualDividends); $('#targetNetWorthInput').value = formatInputNumber(state.settings.targetNetWorth); $('#monthlyContributionInput').value = formatInputNumber(state.settings.monthlyContribution); }
+function renderAssets() { const rows = sortRows(visibleAssets(), 'assets'); $('#assetRows').innerHTML = rows.length ? rows.map(asset => `<tr><td>${escapeHtml(asset.name)}<br><small class="owner-tag">${escapeHtml(ownerLabel(asset))}</small></td><td>${escapeHtml(asset.type)}</td><td>${eur.format(asset.value || 0)}</td><td>${escapeHtml(asset.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-asset="${asset.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay activos adicionales.</td></tr>'; }
+function renderLiabilities() { const rows = sortRows(visibleLiabilities(), 'liabilities'); $('#liabilityRows').innerHTML = rows.length ? rows.map(liability => `<tr><td>${escapeHtml(liability.name)}<br><small class="owner-tag">${escapeHtml(ownerLabel(liability))}</small></td><td>${escapeHtml(liability.type)}</td><td>${eur.format(liability.value || 0)}</td><td>${escapeHtml(liability.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-liability="${liability.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay deudas registradas.</td></tr>'; }
+function renderSettings() { $('#monthlyExpenseInput').value = formatInputNumber(state.settings.monthlyExpense); $('#targetDividendInput').value = formatInputNumber(state.settings.targetAnnualDividends); $('#targetNetWorthInput').value = formatInputNumber(state.settings.targetNetWorth); $('#monthlyContributionInput').value = formatInputNumber(state.settings.monthlyContribution); if ($('#ownerName1')) { $('#ownerName1').value = ownerName('owner-1'); $('#ownerName2').value = ownerName('owner-2'); $('#ownerNameFamily').value = ownerName('owner-family'); } }
+function saveOwnerNames(event) {
+  event.preventDefault();
+  state.ownerNames = migrateOwnerNames({
+    'owner-1': $('#ownerName1').value.trim() || DEFAULT_OWNER_NAMES['owner-1'],
+    'owner-2': $('#ownerName2').value.trim() || DEFAULT_OWNER_NAMES['owner-2'],
+    'owner-family': $('#ownerNameFamily').value.trim() || DEFAULT_OWNER_NAMES['owner-family']
+  });
+  saveState();
+  render();
+  showNotice('Nombres de propietarios guardados.');
+}
 function renderUndoState() { const hasUndo = Boolean(state.lastImportUndo?.snapshot); ['#undoImportBtn', '#undoImportSettingsBtn'].forEach(selector => { const button = $(selector); if (!button) return; if (selector === '#undoImportBtn') button.hidden = !hasUndo; button.disabled = !hasUndo; }); $('#undoHelpText').textContent = hasUndo ? `Disponible la copia previa creada el ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(state.lastImportUndo.createdAt))}.` : 'No hay ninguna importación reciente para revertir.'; }
 function renderBackupStatus() { $('#backupStatus').textContent = state.lastBackupAt ? `Última copia automática: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(state.lastBackupAt))}.` : 'Todavía no se ha generado ninguna copia automática previa a importación.'; }
 function renderReportHistory() { const rows = sortRows(reportHistoryRows(), 'reports'); $('#reportRows').innerHTML = rows.length ? rows.map(row => `<tr><td>${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(row.createdAt))}</td><td>${row.score === null ? '-' : `${row.score}/100`}</td><td>${row.netWorth === null ? '-' : eur.format(row.netWorth)}</td><td>${row.dividends === null ? '-' : eur.format(row.dividends)}</td><td>${escapeHtml(row.concentrationLabel || '-')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Todavía no hay informes generados.</td></tr>'; }
@@ -1080,8 +1104,8 @@ function renderPreviewList(selector, items, formatter) { const element = $(selec
 function renderImportPreview() { if (!pendingImport) return; const preview = pendingImport; $('#importFilename').textContent = preview.file.name; $('#importSummary').textContent = `${preview.validEntries.length} posiciones listas para importar y ${preview.skippedRows.length} filas omitidas por seguridad.`; $('#previewCount').textContent = preview.totals.count; $('#previewValue').textContent = eur.format(preview.totals.value); $('#previewCost').textContent = eur.format(preview.totals.cost); $('#previewGain').textContent = eur.format(preview.totals.gain); $('#previewDividends').textContent = eur.format(preview.totals.dividends); $('#previewNew').textContent = `${preview.newItems.length} nuevas`; $('#previewUpdated').textContent = `${preview.updatedItems.length} actualizadas`; $('#previewRemoved').textContent = `${preview.removedItems.length} ausentes`; $('#previewErrors').textContent = `${preview.issues.length} incidencias`; renderPreviewList('#previewNewList', preview.newItems, item => `<li>${escapeHtml(item.position.name)}<small>${escapeHtml(item.position.isin)}</small></li>`); renderPreviewList('#previewUpdatedList', preview.updatedItems, item => `<li>${escapeHtml(item.position.name)}<small>${escapeHtml(item.changedFields.join(', '))}</small></li>`); renderPreviewList('#previewRemovedList', preview.removedItems, item => `<li>${escapeHtml(item.position.name)}<small>${escapeHtml(item.position.isin)}</small></li>`); const issues = [...preview.skippedRows.map(item => ({ rowNumber: item.rowNumber, text: `${item.position.name} | ${item.reason}` })), ...preview.issues.map(issue => ({ rowNumber: issue.rowNumber, text: `${issue.label} | ${issue.message}` }))]; renderPreviewList('#previewIssueList', issues, issue => `<li>Fila ${issue.rowNumber}: ${escapeHtml(issue.text)}</li>`); $('#importStepSelect').hidden = true; $('#importStepPreview').hidden = false; $('#confirmImportBtn').hidden = false; updateImportWarnings(); }
 function updateImportWarnings() { const warning = $('#importWarnings'); if (!pendingImport) { warning.hidden = true; return; } const mode = $('#importMode').value || 'update'; const messages = []; if (pendingImport.skippedRows.length) messages.push(`Se omitiran ${pendingImport.skippedRows.length} filas sin ISIN valido o con ISIN duplicado.`); if (mode === 'replace' && pendingImport.removedItems.length) messages.push(`Las ${pendingImport.removedItems.length} posiciones ausentes se archivaran, no se borraran.`); if (!messages.length) { warning.hidden = true; warning.innerHTML = ''; return; } warning.hidden = false; warning.innerHTML = messages.map(message => `<div>${escapeHtml(message)}</div>`).join(''); }
 function saveImportBackup(sourceName) { const snapshot = cloneSnapshot(); const backup = { id: crypto.randomUUID?.() || `backup-${Date.now()}`, createdAt: new Date().toISOString(), reason: 'before-import', source: sourceName, snapshot }; state.lastImportUndo = backup; state.lastBackupAt = backup.createdAt; state.backups = [backup, ...state.backups].slice(0, 10); }
-function mergeImportedPosition(existing, incoming) { const now = new Date().toISOString(); return { ...existing, ...incoming, id: existing.id || incoming.id, isin: incoming.isin || existing.isin, notes: existing.notes || '', thesis: existing.thesis || '', targetPrice: existing.targetPrice ?? null, status: existing.status === 'watch' ? 'watch' : 'active', unreliableMatch: false, fallbackKey: incoming.fallbackKey || existing.fallbackKey, createdAt: existing.createdAt || now, updatedAt: now, archivedAt: null }; }
-function createImportedPosition(incoming) { const now = new Date().toISOString(); return { ...incoming, id: incoming.isin || incoming.id || `import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, notes: incoming.notes || '', thesis: incoming.thesis || '', targetPrice: incoming.targetPrice ?? null, status: 'active', createdAt: now, updatedAt: now, archivedAt: null }; }
+function mergeImportedPosition(existing, incoming) { const now = new Date().toISOString(); return { ...existing, ...incoming, id: existing.id || incoming.id, isin: incoming.isin || existing.isin, notes: existing.notes || '', thesis: existing.thesis || '', targetPrice: existing.targetPrice ?? null, status: existing.status === 'watch' ? 'watch' : 'active', unreliableMatch: false, fallbackKey: incoming.fallbackKey || existing.fallbackKey, ownership: existing.ownership || defaultOwnership(), createdAt: existing.createdAt || now, updatedAt: now, archivedAt: null }; }
+function createImportedPosition(incoming) { const now = new Date().toISOString(); const defaultOwnerId = OWNER_IDS.includes(state.viewOwnerId) ? state.viewOwnerId : 'owner-1'; return { ...incoming, id: incoming.isin || incoming.id || `import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, notes: incoming.notes || '', thesis: incoming.thesis || '', targetPrice: incoming.targetPrice ?? null, status: 'active', ownership: [{ ownerId: defaultOwnerId, pct: 1 }], createdAt: now, updatedAt: now, archivedAt: null }; }
 function confirmImport() { if (!pendingImport) return; const mode = $('#importMode').value || 'update'; saveImportBackup(pendingImport.file.name); const next = new Map(); if (mode === 'update') { state.portfolio.forEach(position => next.set(position.id, { ...position })); pendingImport.validEntries.forEach(entry => { const record = entry.existing ? mergeImportedPosition(entry.existing, entry.position) : createImportedPosition(entry.position); next.set(record.id, record); }); } else { state.portfolio.filter(position => !position.isin).forEach(position => next.set(position.id, { ...position })); pendingImport.validEntries.forEach(entry => { const record = entry.existing ? mergeImportedPosition(entry.existing, entry.position) : createImportedPosition(entry.position); next.set(record.id, record); }); const importedIsins = new Set(pendingImport.validEntries.map(entry => entry.position.isin)); state.portfolio.forEach(position => { if (position.isin && !importedIsins.has(position.isin)) next.set(position.id, { ...position, status: 'archived', archivedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); }); } state.portfolio = [...next.values()]; state.lastImport = new Date().toISOString(); saveState(); render(); $('#importDialog').open = false; showNotice(`Importación completada: ${pendingImport.validEntries.length} posiciones sincronizadas.`); pendingImport = null; }
 function openTransactionsImport() { pendingTransactionImport = null; $('#transactionsCsvFile').value = ''; $('#transactionsStepSelect').hidden = false; $('#transactionsStepPreview').hidden = true; $('#confirmTransactionsBtn').hidden = true; $('#transactionsWarnings').hidden = true; $('#transactionsDialog').open = true; }
 function normalizeTransactionCsvRow(row, index) {
@@ -1297,6 +1321,22 @@ function savePositionDetails() {
   editingPositionId = null;
   showNotice('Posición actualizada.');
 }
+function readOwnershipControl(prefix) {
+  const owner = $(`#${prefix}Owner`)?.value || 'owner-1';
+  if (owner !== 'shared') return [{ ownerId: owner, pct: 1 }];
+  const ownerA = $(`#${prefix}OwnerA`)?.value || 'owner-1';
+  const ownerB = $(`#${prefix}OwnerB`)?.value || 'owner-2';
+  const pctA = Math.max(0, toNum($(`#${prefix}OwnerAPct`)?.value, 50) || 0);
+  const pctB = Math.max(0, toNum($(`#${prefix}OwnerBPct`)?.value, 50) || 0);
+  if (ownerA === ownerB || (pctA + pctB) <= 0) return [{ ownerId: ownerA, pct: 1 }];
+  return migrateOwnership([{ ownerId: ownerA, pct: pctA }, { ownerId: ownerB, pct: pctB }]);
+}
+function bindOwnershipToggle(prefix) {
+  const select = $(`#${prefix}Owner`);
+  const splitBlock = $(`#${prefix}SharedSplit`);
+  if (!select || !splitBlock) return;
+  select.addEventListener('change', () => { splitBlock.hidden = select.value !== 'shared'; });
+}
 function addAsset(event) {
   event.preventDefault();
   const name = $('#assetName').value.trim();
@@ -1309,13 +1349,16 @@ function addAsset(event) {
     type: $('#assetType').value || 'other',
     value,
     notes: $('#assetNotes').value.trim(),
+    ownership: readOwnershipControl('asset'),
     updatedAt: new Date().toISOString()
   });
   saveState();
   render();
   $('#assetForm').reset();
   $('#assetType').value = 'cash';
-  showNotice('Activo anadido.');
+  $('#assetOwner').value = 'owner-1';
+  $('#assetSharedSplit').hidden = true;
+  showNotice('Activo añadido.');
 }
 function addLiability(event) {
   event.preventDefault();
@@ -1329,13 +1372,16 @@ function addLiability(event) {
     type: $('#liabilityType').value || 'other',
     value,
     notes: $('#liabilityNotes').value.trim(),
+    ownership: readOwnershipControl('liability'),
     updatedAt: new Date().toISOString()
   });
   saveState();
   render();
   $('#liabilityForm').reset();
   $('#liabilityType').value = 'mortgage';
-  showNotice('Deuda anadida.');
+  $('#liabilityOwner').value = 'owner-1';
+  $('#liabilitySharedSplit').hidden = true;
+  showNotice('Deuda añadida.');
 }
 function saveFinancialSettings(event) {
   event.preventDefault();
@@ -1392,6 +1438,12 @@ $('#themeBtn')?.addEventListener('click', () => {
   state.theme = state.theme === 'dark' ? 'light' : 'dark';
   saveState();
   applyTheme();
+});
+$('#ownerViewSelect')?.addEventListener('change', event => {
+  const value = event.target.value;
+  state.viewOwnerId = value === 'all' || OWNER_IDS.includes(value) ? value : 'all';
+  saveState();
+  render();
 });
 ['#importBtn', '#portfolioImportBtn'].forEach(selector => $(selector)?.addEventListener('click', openImport));
 $('#chooseCsvBtn')?.addEventListener('click', () => $('#csvFile').click());
@@ -1461,7 +1513,10 @@ document.addEventListener('click', event => {
 });
 $('#assetForm')?.addEventListener('submit', addAsset);
 $('#liabilityForm')?.addEventListener('submit', addLiability);
+bindOwnershipToggle('asset');
+bindOwnershipToggle('liability');
 $('#settingsForm')?.addEventListener('submit', saveFinancialSettings);
+$('#ownersForm')?.addEventListener('submit', saveOwnerNames);
 $('#exportJsonBtn')?.addEventListener('click', exportJson);
 $('#restoreJsonBtn')?.addEventListener('click', () => $('#jsonFile').click());
 $('#jsonFile')?.addEventListener('change', event => {
@@ -1625,7 +1680,7 @@ function defaultOptionPosition() {
     linkedPositionId: '', rollFromId: '', rolledToId: '',
     closedAt: '', closePremiumPerShare: null, closeFees: 0, closeReason: '', realizedResult: null,
     lastScore: null, lastScoreBreakdown: null,
-    notes: '',
+    notes: '', ownership: defaultOwnership(),
     createdAt: now, updatedAt: now
   };
 }
@@ -1657,7 +1712,7 @@ function migrateOptionPosition(option) {
     linkedPositionId: cleanText(option.linkedPositionId), rollFromId: cleanText(option.rollFromId), rolledToId: cleanText(option.rolledToId),
     closedAt: normalizeDate(option.closedAt), closePremiumPerShare: toNum(option.closePremiumPerShare, null), closeFees: toNum(option.closeFees, 0) || 0, closeReason: cleanText(option.closeReason), realizedResult: toNum(option.realizedResult, null),
     lastScore: toNum(option.lastScore, null), lastScoreBreakdown: Array.isArray(option.lastScoreBreakdown) ? option.lastScoreBreakdown : null,
-    notes: cleanText(option.notes),
+    notes: cleanText(option.notes), ownership: migrateOwnership(option.ownership),
     createdAt: option.createdAt || base.createdAt, updatedAt: option.updatedAt || base.updatedAt
   };
 }
@@ -2009,6 +2064,7 @@ function readAnalyzerForm() {
     thesis: cleanText($('#anThesis')?.value),
     risks: cleanText($('#anRisks')?.value),
     exitPlan: cleanText($('#anExitPlan')?.value),
+    ownership: readOwnershipControl('an'),
     status: 'proposal'
   });
 }
@@ -2107,9 +2163,10 @@ function renderComparator() {
   </tr>`).join('');
 }
 function optionsSummary() {
-  const open = state.options.filter(option => ['open', 'rolled'].includes(option.status));
+  const scopedOptions = visibleOptions();
+  const open = scopedOptions.filter(option => ['open', 'rolled'].includes(option.status));
   const totalCollateral = open.reduce((sum, option) => sum + optionDerived(option).capitalCommitted, 0);
-  const totalPremium = state.options.reduce((sum, option) => sum + optionDerived(option).netPremium, 0);
+  const totalPremium = scopedOptions.reduce((sum, option) => sum + optionDerived(option).netPremium, 0);
   const openPremium = open.reduce((sum, option) => sum + optionDerived(option).netPremium, 0);
   const expiringSoon = open.filter(option => option.expiration && (new Date(option.expiration) - new Date()) / 86400000 <= 45).sort((a, b) => new Date(a.expiration) - new Date(b.expiration));
   const assignedPotential = open.filter(option => option.optionType === 'put').reduce((sum, option) => sum + ((option.strike || 0) * (option.contracts || 0) * (option.multiplier || 100)), 0);
@@ -2290,6 +2347,26 @@ function updateAdvisorSettings() {
 function recommendationActionLabel(action) {
   return action === 'accept' ? 'Aceptada' : action === 'execute' ? 'Ejecutada' : action === 'postpone' ? 'Pospuesta' : 'Descartada';
 }
+function computeOwnerBreakdown() {
+  return OWNER_IDS.map(ownerId => {
+    const positions = ownerFilteredList(state.portfolio, ownerId).filter(position => ACTIVE_STATUSES.has(normalizeStatus(position.status)));
+    const portfolioTotals = totals(positions, ownerId);
+    const other = assetTotals(ownerId);
+    const netWorth = portfolioTotals.value + other.assets - other.liabilities;
+    return { ownerId, name: ownerName(ownerId), portfolioValue: portfolioTotals.value, dividends: portfolioTotals.dividends, assets: other.assets, liabilities: other.liabilities, netWorth };
+  });
+}
+function renderOwnerBreakdown() {
+  const card = $('#ownerBreakdownCard');
+  const rows = $('#ownerBreakdownRows');
+  if (!card || !rows) return;
+  const isConsolidated = (state.viewOwnerId || 'all') === 'all';
+  card.hidden = !isConsolidated;
+  if (!isConsolidated) return;
+  const breakdown = computeOwnerBreakdown();
+  rows.className = 'scenario-list';
+  rows.innerHTML = breakdown.map(item => `<div class="scenario-card"><strong>${escapeHtml(item.name)}</strong><span>${eur.format(item.netWorth)}</span><small>Cartera: ${eur.format(item.portfolioValue)} | Dividendos: ${eur.format(item.dividends)}</small><small>Otros activos: ${eur.format(item.assets)} | Deuda: ${eur.format(item.liabilities)}</small></div>`).join('');
+}
 function renderDashboard() {
   const portfolio = activePortfolio();
   const metrics = fullMetrics(portfolio);
@@ -2335,7 +2412,9 @@ function renderDashboard() {
 }
 function render() {
   applyTheme();
+  applyOwnerView();
   renderDashboard();
+  renderOwnerBreakdown();
   renderAdvisorCenter();
   renderPortfolio();
   renderTransactions();
@@ -2358,6 +2437,7 @@ ensureAdvisoryState();
 ['#advisorMinLiquidity', '#advisorUpcomingDebt', '#advisorUpcomingDebtMonths', '#advisorSavingsCapacity', '#advisorEmergencyFund'].forEach(selector => {
   $(selector)?.addEventListener('change', updateAdvisorSettings);
 });
+bindOwnershipToggle('an');
 $('#anAnalyzeBtn')?.addEventListener('click', () => {
   const option = readAnalyzerForm();
   if (!option.underlying && !option.ticker) { showNotice('Indica al menos el subyacente o el ticker.'); return; }
@@ -2417,15 +2497,53 @@ function migrateRecommendation(entry) { if (!entry || typeof entry !== 'object')
 function migrateDecisionReview(entry) { if (!entry || typeof entry !== 'object') return null; const phase = cleanText(entry.phase).toLowerCase() || '3m'; const status = cleanText(entry.status).toLowerCase() || 'pending'; return { ...defaultDecisionReview(), ...entry, id: cleanText(entry.id) || `decision-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, recommendationId: cleanText(entry.recommendationId), title: cleanText(entry.title) || 'Decisión', category: cleanText(entry.category), phase, phaseLabel: reviewPhaseLabel(phase), actionLabel: cleanText(entry.actionLabel) || 'Decisión registrada', status, statusLabel: cleanText(entry.statusLabel) || recommendationStatusLabel(status), reason: cleanText(entry.reason), expectedOutcome: cleanText(entry.expectedOutcome), actualOutcome: cleanText(entry.actualOutcome), lesson: cleanText(entry.lesson), createdAt: entry.createdAt || new Date().toISOString(), decidedAt: entry.decidedAt || '', reviewDate: normalizeDate(entry.reviewDate) || '', reviewedAt: entry.reviewedAt || '' }; }
 function migrateBackup(backup) { if (!backup || typeof backup !== 'object' || !backup.snapshot) return null; return { id: backup.id || `backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, createdAt: backup.createdAt || new Date().toISOString(), reason: backup.reason || 'import', source: backup.source || null, snapshot: { portfolio: Array.isArray(backup.snapshot.portfolio) ? backup.snapshot.portfolio.map(migratePosition).filter(Boolean) : [], transactions: Array.isArray(backup.snapshot.transactions) ? backup.snapshot.transactions.map(migrateTransaction).filter(Boolean) : [], options: Array.isArray(backup.snapshot.options) ? backup.snapshot.options.map(migrateOptionPosition).filter(Boolean) : [], recommendations: Array.isArray(backup.snapshot.recommendations) ? backup.snapshot.recommendations.map(migrateRecommendation).filter(Boolean) : [], decisionReviews: Array.isArray(backup.snapshot.decisionReviews) ? backup.snapshot.decisionReviews.map(migrateDecisionReview).filter(Boolean) : [], advisor: backup.snapshot.advisor && typeof backup.snapshot.advisor === 'object' ? { ...backup.snapshot.advisor } : null, history: Array.isArray(backup.snapshot.history) ? backup.snapshot.history.map(migrateSnapshot).filter(Boolean) : [], assets: Array.isArray(backup.snapshot.assets) ? backup.snapshot.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(backup.snapshot.liabilities) ? backup.snapshot.liabilities.map(migrateLiability).filter(Boolean) : [], reportHistory: Array.isArray(backup.snapshot.reportHistory) ? backup.snapshot.reportHistory.map(migrateReportEntry).filter(Boolean) : [], settings: migrateSettings(backup.snapshot.settings), lastImport: backup.snapshot.lastImport || null, lastTransactionsImport: backup.snapshot.lastTransactionsImport || null, lastBackupAt: backup.snapshot.lastBackupAt || null } }; }
 function ensureAdvisoryState() { const defaults = defaultAdvisorState(state.settings); state.advisor = { ...defaults, ...(state.advisor && typeof state.advisor === 'object' ? state.advisor : {}) }; state.advisor.minimumLiquidityTarget = toNum(state.advisor.minimumLiquidityTarget, defaults.minimumLiquidityTarget) || 0; state.advisor.upcomingDebt = toNum(state.advisor.upcomingDebt, 0) || 0; state.advisor.upcomingDebtMonths = Math.max(0, Math.round(toNum(state.advisor.upcomingDebtMonths, 12) || 12)); state.advisor.savingsCapacity = toNum(state.advisor.savingsCapacity, state.settings?.monthlyContribution ?? defaults.savingsCapacity) || 0; state.advisor.emergencyFundTarget = toNum(state.advisor.emergencyFundTarget, defaults.emergencyFundTarget) || 0; state.options = Array.isArray(state.options) ? state.options.map(migrateOptionPosition).filter(Boolean) : []; state.recommendations = Array.isArray(state.recommendations) ? state.recommendations.map(migrateRecommendation).filter(Boolean) : []; state.decisionReviews = Array.isArray(state.decisionReviews) ? state.decisionReviews.map(migrateDecisionReview).filter(Boolean) : []; }
-function defaultState() { return { schemaVersion: SCHEMA_VERSION, portfolio: [], transactions: [], options: [], recommendations: [], decisionReviews: [], advisor: { ...defaultAdvisorState(DEFAULT_SETTINGS) }, plan: defaultPlanState(), history: [], backups: [], assets: [], liabilities: [], reportHistory: [], settings: { ...DEFAULT_SETTINGS }, tableSorts: defaultTableSorts(), lastImport: null, lastTransactionsImport: null, lastBackupAt: null, lastImportUndo: null, theme: 'light' }; }
-function migrateState(raw) { const base = defaultState(); if (!raw || typeof raw !== 'object') return base; const settings = migrateSettings(raw.settings); return { ...base, ...raw, schemaVersion: SCHEMA_VERSION, portfolio: Array.isArray(raw.portfolio) ? raw.portfolio.map(migratePosition).filter(Boolean) : [], transactions: Array.isArray(raw.transactions) ? raw.transactions.map(migrateTransaction).filter(Boolean) : [], options: Array.isArray(raw.options) ? raw.options.map(migrateOptionPosition).filter(Boolean) : [], recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.map(migrateRecommendation).filter(Boolean) : [], decisionReviews: Array.isArray(raw.decisionReviews) ? raw.decisionReviews.map(migrateDecisionReview).filter(Boolean) : [], advisor: { ...defaultAdvisorState(settings), ...(raw.advisor && typeof raw.advisor === 'object' ? raw.advisor : {}) }, plan: migratePlanState(raw.plan), history: Array.isArray(raw.history) ? raw.history.map(migrateSnapshot).filter(Boolean) : [], backups: Array.isArray(raw.backups) ? raw.backups.map(migrateBackup).filter(Boolean).slice(0, 10) : [], assets: Array.isArray(raw.assets) ? raw.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(raw.liabilities) ? raw.liabilities.map(migrateLiability).filter(Boolean) : [], reportHistory: Array.isArray(raw.reportHistory) ? raw.reportHistory.map(migrateReportEntry).filter(Boolean).slice(0, 24) : [], settings, tableSorts: migrateTableSorts(raw.tableSorts), lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null, lastTransactionsImport: raw.lastTransactionsImport || null, theme: raw.theme === 'dark' ? 'dark' : 'light' }; }
+function defaultOwnerNames() { return { ...DEFAULT_OWNER_NAMES }; }
+function migrateOwnerNames(raw) {
+  const next = defaultOwnerNames();
+  if (raw && typeof raw === 'object') OWNER_IDS.forEach(id => { if (cleanText(raw[id])) next[id] = cleanText(raw[id]); });
+  return next;
+}
+function defaultOwnership() { return [{ ownerId: 'owner-1', pct: 1 }]; }
+function migrateOwnership(raw) {
+  if (!Array.isArray(raw) || !raw.length) return defaultOwnership();
+  const cleaned = raw
+    .map(entry => ({ ownerId: OWNER_IDS.includes(entry?.ownerId) ? entry.ownerId : null, pct: toNum(entry?.pct, 0) || 0 }))
+    .filter(entry => entry.ownerId && entry.pct > 0);
+  if (!cleaned.length) return defaultOwnership();
+  const total = cleaned.reduce((sum, entry) => sum + entry.pct, 0);
+  return total > 0 ? cleaned.map(entry => ({ ownerId: entry.ownerId, pct: entry.pct / total })) : defaultOwnership();
+}
+function ownerName(ownerId) {
+  if (ownerId === 'all') return 'Consolidado';
+  return (state.ownerNames && state.ownerNames[ownerId]) || DEFAULT_OWNER_NAMES[ownerId] || ownerId;
+}
+function ownerShareOf(record, ownerId) {
+  if (ownerId === 'all') return 1;
+  const entry = (record?.ownership || []).find(item => item.ownerId === ownerId);
+  return entry ? entry.pct : 0;
+}
+function ownerFilteredList(list, ownerId = state.viewOwnerId) {
+  if (!Array.isArray(list)) return [];
+  if (!ownerId || ownerId === 'all') return list;
+  return list.filter(record => ownerShareOf(record, ownerId) > 0);
+}
+function visibleAssets() { return ownerFilteredList(state.assets); }
+function visibleLiabilities() { return ownerFilteredList(state.liabilities); }
+function visibleOptions() { return ownerFilteredList(state.options); }
+function ownerLabel(record) {
+  const ownership = record?.ownership || defaultOwnership();
+  if (ownership.length === 1 && ownership[0].pct >= 0.999) return ownerName(ownership[0].ownerId);
+  return ownership.map(entry => `${ownerName(entry.ownerId)} ${Math.round(entry.pct * 100)}%`).join(' · ');
+}
+function defaultState() { return { schemaVersion: SCHEMA_VERSION, portfolio: [], transactions: [], options: [], recommendations: [], decisionReviews: [], advisor: { ...defaultAdvisorState(DEFAULT_SETTINGS) }, plan: defaultPlanState(), history: [], backups: [], assets: [], liabilities: [], reportHistory: [], settings: { ...DEFAULT_SETTINGS }, tableSorts: defaultTableSorts(), ownerNames: defaultOwnerNames(), viewOwnerId: 'all', lastImport: null, lastTransactionsImport: null, lastBackupAt: null, lastImportUndo: null, theme: 'light' }; }
+function migrateState(raw) { const base = defaultState(); if (!raw || typeof raw !== 'object') return base; const settings = migrateSettings(raw.settings); return { ...base, ...raw, schemaVersion: SCHEMA_VERSION, portfolio: Array.isArray(raw.portfolio) ? raw.portfolio.map(migratePosition).filter(Boolean) : [], transactions: Array.isArray(raw.transactions) ? raw.transactions.map(migrateTransaction).filter(Boolean) : [], options: Array.isArray(raw.options) ? raw.options.map(migrateOptionPosition).filter(Boolean) : [], recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.map(migrateRecommendation).filter(Boolean) : [], decisionReviews: Array.isArray(raw.decisionReviews) ? raw.decisionReviews.map(migrateDecisionReview).filter(Boolean) : [], advisor: { ...defaultAdvisorState(settings), ...(raw.advisor && typeof raw.advisor === 'object' ? raw.advisor : {}) }, plan: migratePlanState(raw.plan), history: Array.isArray(raw.history) ? raw.history.map(migrateSnapshot).filter(Boolean) : [], backups: Array.isArray(raw.backups) ? raw.backups.map(migrateBackup).filter(Boolean).slice(0, 10) : [], assets: Array.isArray(raw.assets) ? raw.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(raw.liabilities) ? raw.liabilities.map(migrateLiability).filter(Boolean) : [], reportHistory: Array.isArray(raw.reportHistory) ? raw.reportHistory.map(migrateReportEntry).filter(Boolean).slice(0, 24) : [], settings, tableSorts: migrateTableSorts(raw.tableSorts), ownerNames: migrateOwnerNames(raw.ownerNames), viewOwnerId: OWNER_IDS.includes(raw.viewOwnerId) || raw.viewOwnerId === 'all' ? raw.viewOwnerId : 'all', lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null, lastTransactionsImport: raw.lastTransactionsImport || null, theme: raw.theme === 'dark' ? 'dark' : 'light' }; }
 function cloneSnapshot() { return JSON.parse(JSON.stringify({ portfolio: state.portfolio, transactions: state.transactions, options: state.options, recommendations: state.recommendations, decisionReviews: state.decisionReviews, advisor: state.advisor, history: state.history, assets: state.assets, liabilities: state.liabilities, reportHistory: state.reportHistory, settings: state.settings, lastImport: state.lastImport, lastTransactionsImport: state.lastTransactionsImport, lastBackupAt: state.lastBackupAt })); }
 function decisionReviewsRows() { return sortRows((state.decisionReviews || []).map(migrateDecisionReview).filter(Boolean), 'decisionReviews'); }
 function dueReviewCount() { const today = new Date().toISOString().slice(0, 10); return decisionReviewsRows().filter(item => item.reviewDate && item.reviewDate <= today && ['pending', 'reviewing'].includes(item.status)).length; }
 function buildRecommendations() { const { signals, liquidityAvailable, requiredLiquidity, debtRatio, options, dividendTrend } = advisorSignals(); const topPositions = sortedPortfolio().slice(0, 5); const generated = []; if (liquidityAvailable < requiredLiquidity) generated.push({ id: 'liq-buffer', kind: 'alert', title: 'Reforzar la reserva de liquidez antes de nuevas compras', category: 'Liquidez', action: 'Reducir temporalmente la inversión y reservar caja hasta recuperar el umbral prudente.', urgency: 'Alta', explanation: 'La liquidez disponible tras descontar garantías queda por debajo del objetivo dinámico.', justification: `${eur.format(liquidityAvailable)} disponibles frente a un objetivo de ${eur.format(requiredLiquidity)}.`, impact: 'Alto', risk: 'Alto', horizon: '1-3 meses', reviewDate: new Date(Date.now() + 30 * 86400000).toISOString() }); if (state.advisor.upcomingDebt > 0 && state.advisor.upcomingDebtMonths <= 12) generated.push({ id: 'mortgage-priority', kind: 'estimate', title: 'Priorizar liquidez y capacidad de ahorro antes de formalizar la hipoteca', category: 'Deuda futura', action: 'Fijar un objetivo de caja previo a la firma y revisar aportaciones mensuales hasta alcanzarlo.', urgency: state.advisor.upcomingDebtMonths <= 6 ? 'Alta' : 'Media', explanation: 'La nueva deuda futura cambia el nivel prudente de caja y la tolerancia al riesgo.', justification: `Hipoteca o deuda prevista de ${eur.format(state.advisor.upcomingDebt)} en ${state.advisor.upcomingDebtMonths} meses.`, impact: 'Alto', risk: 'Alto', horizon: 'Hasta formalización', reviewDate: new Date(Date.now() + 45 * 86400000).toISOString() }); if (signals.find(item => item.id === 'company')?.tone === 'risk') generated.push({ id: 'top-position-freeze', kind: 'alert', title: 'Evitar ampliar las mayores posiciones hasta rebajar la concentración', category: 'Concentración', action: 'Congelar compras en las posiciones principales y dirigir nuevas entradas a zonas menos representadas.', urgency: 'Alta', explanation: 'La posición principal ya pesa demasiado dentro de la cartera.', justification: topPositions[0] ? `${topPositions[0].name} pesa ${formatPercent(topPositions[0].allocation || 0)}.` : 'Sin posición principal disponible.', impact: 'Alto', risk: 'Alto', horizon: '3 meses', reviewDate: new Date(Date.now() + 90 * 86400000).toISOString() }); if (signals.find(item => item.id === 'country')?.tone !== 'good') generated.push({ id: 'international-balance', kind: 'recommendation', title: 'Dirigir nuevas aportaciones a países o sectores infraponderados', category: 'Asignación', action: 'Priorizar las próximas compras fuera del sesgo geográfico dominante.', urgency: 'Media', explanation: 'La cartera puede diversificarse mejor sin necesidad de vender posiciones existentes.', justification: `La mayor exposición geográfica sigue concentrada en ${signals.find(item => item.id === 'country')?.name || 'una zona dominante'}.`, impact: 'Medio', risk: 'Medio', horizon: '3-6 meses', reviewDate: new Date(Date.now() + 120 * 86400000).toISOString() }); if (options.totalCollateral > 0) generated.push({ id: 'options-cash-check', kind: 'alert', title: 'Revisar si todas las puts abiertas serían asumibles si se asignaran hoy', category: 'Opciones', action: 'Simular asignación simultánea y reservar caja real para no depender de ventas forzadas.', urgency: options.expiringSoon.length ? 'Alta' : 'Media', explanation: 'Las opciones abiertas consumen liquidez real y pueden aumentar la concentración de forma brusca.', justification: `${eur.format(options.totalCollateral)} comprometidos y ${options.expiringSoon.length} vencimientos próximos.`, impact: 'Alto', risk: 'Alto', horizon: 'Inmediato', reviewDate: new Date(Date.now() + 21 * 86400000).toISOString() }); if (dividendTrend.growth12m !== null && dividendTrend.growth12m <= 0) generated.push({ id: 'dividend-review', kind: 'estimate', title: 'Revisar si el crecimiento del dividendo se ha estancado frente al último año', category: 'Dividendos', action: 'Analizar si el frenazo viene de recortes, divisa, rotación o exceso de concentración en pagadores maduros.', urgency: 'Media', explanation: 'La renta recurrente no está mejorando al ritmo esperado.', justification: `Crecimiento interanual estimado: ${formatPercent(dividendTrend.growth12m)}.`, impact: 'Medio', risk: 'Medio', horizon: '1-2 meses', reviewDate: new Date(Date.now() + 60 * 86400000).toISOString() }); if (debtRatio > 0.5) generated.push({ id: 'leverage-discipline', kind: 'alert', title: 'Reducir el ritmo de riesgo hasta estabilizar la deuda total', category: 'Riesgo financiero', action: 'Aplazar decisiones de riesgo incremental hasta aclarar el mapa de deuda y caja futura.', urgency: 'Alta', explanation: 'La deuda total prevista pesa demasiado sobre el patrimonio consolidado.', justification: `Ratio estimado de deuda ampliada: ${num.format(debtRatio * 100)} %.`, impact: 'Alto', risk: 'Alto', horizon: '6-12 meses', reviewDate: new Date(Date.now() + 120 * 86400000).toISOString() }); if (dueReviewCount() > 0) generated.push({ id: 'review-pending', kind: 'fact', title: 'Revisar decisiones pasadas ya vencidas', category: 'Aprendizaje', action: 'Cerrar las revisiones pendientes para saber que decisiones mejoraron realmente tu situación.', urgency: 'Media', explanation: 'Hay decisiones con fecha de revisión ya alcanzada.', justification: `${dueReviewCount()} revisiones ya deberían haberse evaluado.`, impact: 'Medio', risk: 'Medio', horizon: 'Este mes', reviewDate: new Date().toISOString() }); const existingById = new Map((state.recommendations || []).map(item => [item.id, item])); const ranked = [...generated].sort((a, b) => (urgencyRank(a.urgency) - urgencyRank(b.urgency)) || ((RECOMMENDATION_PRIORITY_WEIGHTS[a.id] || 99) - (RECOMMENDATION_PRIORITY_WEIGHTS[b.id] || 99))); return ranked.slice(0, 6).map(item => { const existing = existingById.get(item.id); return migrateRecommendation({ ...item, status: existing?.status || 'pending', reason: existing?.reason || '', createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: existing?.decidedAt || null }); }); }
 function renderAdvisorCenter() { ensureAdvisoryState(); const recommendationRows = $('#recommendationRows'); const decisionRows = $('#decisionRows'); const diagnosis = $('#advisorDiagnosis'); const priorities = $('#advisorPriorities'); const signalsNode = $('#advisorSignals'); const optionsSummaryNode = $('#advisorOptionsSummary'); const optionsAlertsNode = $('#advisorOptionsAlerts'); if (!diagnosis) return; $('#advisorMinLiquidity').value = formatInputNumber(state.advisor.minimumLiquidityTarget); $('#advisorUpcomingDebt').value = formatInputNumber(state.advisor.upcomingDebt); $('#advisorUpcomingDebtMonths').value = state.advisor.upcomingDebtMonths ?? ''; $('#advisorSavingsCapacity').value = formatInputNumber(state.advisor.savingsCapacity); $('#advisorEmergencyFund').value = formatInputNumber(state.advisor.emergencyFundTarget); state.recommendations = buildRecommendations(); const sortedRecommendations = sortRows(state.recommendations, 'recommendations'); const { signals } = advisorSignals(); const options = optionsSummary(); diagnosis.className = 'summary-stack'; diagnosis.innerHTML = executiveDiagnosis(state.recommendations).map((line, index) => index === 0 ? `<strong>${escapeHtml(line)}</strong>` : `<small>${escapeHtml(line)}</small>`).join(''); priorities.className = state.recommendations.length ? 'scenario-list' : 'scenario-list empty-state'; priorities.innerHTML = state.recommendations.slice(0, 3).map(item => `<article class="priority-card"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.urgency)}</span><small>${escapeHtml(item.explanation)}</small><small>Acción: ${escapeHtml(item.action || 'Pendiente de concretar')}</small><small>Revisión: ${dateEs(String(item.reviewDate).slice(0, 10))}</small></article>`).join('') || 'Sin datos'; signalsNode.className = 'signal-list'; signalsNode.innerHTML = signals.map(signal => `<div class="signal-row signal-${signal.tone}"><strong>${escapeHtml(signal.title)}</strong><span>${escapeHtml(signal.name)}</span><small>${escapeHtml(signal.detail)}</small></div>`).join(''); optionsSummaryNode.className = 'summary-stack'; optionsSummaryNode.innerHTML = options.open.length ? [`<strong>${options.open.length} posiciones abiertas</strong>`, `<small>Garantías reservadas: ${eur.format(options.totalCollateral)}</small>`, `<small>Primas netas acumuladas: ${eur.format(options.totalPremium)}</small>`, `<small>Exposición potencial por asignación: ${eur.format(options.assignedPotential)}</small>`].join('') : '<small>No hay opciones abiertas registradas.</small>'; optionsAlertsNode.className = 'signal-list'; const optionAlertCards = []; if (options.expiringSoon.length) optionAlertCards.push({ tone: 'warn', title: 'Vencimientos próximos', detail: `${options.expiringSoon.length} posiciones vencen en los próximos 45 días.` }); if (options.totalCollateral > fullMetrics().liquidity * 0.4 && fullMetrics().liquidity > 0) optionAlertCards.push({ tone: 'risk', title: 'Liquidez comprometida', detail: 'Las garantías absorben una parte demasiado alta de la caja disponible.' }); if (!optionAlertCards.length) optionAlertCards.push({ tone: 'good', title: 'Opciones bajo control', detail: 'No hay alertas críticas en las posiciones registradas.' }); optionsAlertsNode.innerHTML = optionAlertCards.map(item => `<div class="signal-row signal-${item.tone}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div>`).join(''); recommendationRows.innerHTML = sortedRecommendations.length ? sortedRecommendations.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.category)} | ${escapeHtml(advisoryKindLabel(item.kind))}</small><br><small>${escapeHtml(item.action || item.explanation)}</small></td><td>${escapeHtml(item.urgency)}</td><td>${escapeHtml(item.impact)}</td><td>${escapeHtml(item.risk)}</td><td>${dateEs(String(item.reviewDate).slice(0, 10))}</td><td>${escapeHtml(item.statusLabel || recommendationStatusLabel(item.status))}</td><td><div class="recommendation-actions"><wa-button size="small" appearance="plain" data-rec-action="accept" data-rec-id="${item.id}">Aceptar</wa-button><wa-button size="small" appearance="plain" data-rec-action="execute" data-rec-id="${item.id}">Ejecutada</wa-button><wa-button size="small" appearance="plain" data-rec-action="postpone" data-rec-id="${item.id}">Posponer</wa-button><wa-button size="small" appearance="plain" data-rec-action="discard" data-rec-id="${item.id}">Descartar</wa-button></div></td></tr>`).join('') : '<tr><td colspan="7" class="empty-cell">Sin recomendaciones todavía.</td></tr>'; const reviews = decisionReviewsRows(); decisionRows.innerHTML = reviews.length ? reviews.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.phaseLabel)} | ${escapeHtml(item.actionLabel)}</small></td><td>${item.decidedAt ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.decidedAt)) : '-'}</td><td>${dateEs(String(item.reviewDate || '').slice(0, 10))}</td><td>${escapeHtml(item.statusLabel)}</td><td>${escapeHtml(item.lesson || item.reason || item.expectedOutcome || 'Sin aprendizaje registrado')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Aún no hay decisiones registradas.</td></tr>'; }
 function optionStressScenario() {
-  const openPuts = state.options.filter(option => option.status === 'open' && option.optionType === 'put' && option.side === 'sell');
+  const openPuts = visibleOptions().filter(option => option.status === 'open' && option.optionType === 'put' && option.side === 'sell');
   const metrics = fullMetrics();
   const totalAssignmentCost = openPuts.reduce((sum, option) => sum + (option.strike || 0) * (option.contracts || 0) * (option.multiplier || 100), 0);
   return { positions: openPuts.length, totalAssignmentCost, liquidityAfter: metrics.liquidity - totalAssignmentCost, stillComfortable: (metrics.liquidity - totalAssignmentCost) >= 0 };
@@ -2456,7 +2574,7 @@ function renderOptionsModule() {
     portfolioSummaryNode.innerHTML = summary.open.length ? [`<strong>${summary.open.length} posiciones abiertas</strong>`, `<small>Garantías reservadas: ${eur.format(summary.totalCollateral)}</small>`, `<small>Primas abiertas: ${eur.format(summary.openPremium)}</small>`, `<small>Vencimientos próximos: ${summary.expiringSoon.length}</small>`].join('') : 'Sin operaciones registradas.';
   }
   if (!rowsNode) return;
-  const visible = state.options.filter(option => ['proposal', 'open', 'rolled'].includes(option.status));
+  const visible = visibleOptions().filter(option => ['proposal', 'open', 'rolled'].includes(option.status));
   const rows = sortRows(visible, 'options');
   rowsNode.innerHTML = rows.length ? rows.map(option => {
     const derived = optionDerived(option);
@@ -2623,7 +2741,7 @@ function renderOptionHistory() {
   const rowsNode = $('#optionHistoryRows');
   const decisionRowsNode = $('#optionDecisionRows');
   if (!rowsNode) return;
-  const closed = sortRows(state.options.filter(option => ['closed', 'expired', 'assigned', 'exercised', 'rolled', 'cancelled'].includes(option.status)), 'options');
+  const closed = sortRows(visibleOptions().filter(option => ['closed', 'expired', 'assigned', 'exercised', 'rolled', 'cancelled'].includes(option.status)), 'options');
   rowsNode.innerHTML = closed.length ? closed.map(option => `<tr><td class="company-cell"><strong>${escapeHtml(option.underlying || option.ticker || 'Sin subyacente')}</strong><small>${escapeHtml(option.ticker || '-')}</small></td><td>${escapeHtml(option.strategy)}</td><td>${escapeHtml(OPTION_STATUS_LABELS[option.status] || option.status)}</td><td>${dateEs(option.openedAt)}</td><td>${dateEs(option.closedAt)}</td><td class="${(option.realizedResult || 0) >= 0 ? 'positive' : 'negative'}">${option.realizedResult === null || option.realizedResult === undefined ? '-' : eur.format(option.realizedResult)}</td><td><wa-button size="small" appearance="plain" data-delete-option="${option.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="7" class="empty-cell">Sin operaciones cerradas todavía.</td></tr>';
   if (!decisionRowsNode) return;
   const reviews = decisionReviewsRows().filter(item => item.category === 'Opciones');
@@ -2633,7 +2751,7 @@ function renderOptionsCalendar() {
   const node = $('#optionsCalendarRows');
   if (!node) return;
   const events = [];
-  state.options.filter(option => ['open', 'proposal', 'rolled'].includes(option.status)).forEach(option => {
+  visibleOptions().filter(option => ['open', 'proposal', 'rolled'].includes(option.status)).forEach(option => {
     const label = option.underlying || option.ticker || 'Opción';
     if (option.expiration) events.push({ date: option.expiration, tone: optionDaysToExpiration(option) <= 7 ? 'risk' : optionDaysToExpiration(option) <= 30 ? 'warn' : 'good', title: 'Vencimiento', detail: `${label} | ${option.strategy}` });
     if (option.earningsDate) events.push({ date: option.earningsDate, tone: 'warn', title: 'Resultados', detail: label });
@@ -2648,7 +2766,7 @@ function renderOptionsCalendar() {
 }
 function renderOptionsStats() {
   if (!$('#statPremiumNet')) return;
-  const all = state.options;
+  const all = visibleOptions();
   const terminal = all.filter(option => ['closed', 'expired', 'assigned', 'exercised', 'rolled'].includes(option.status));
   const grossPremium = all.reduce((sum, option) => sum + optionDerived(option).grossPremium, 0);
   const netPremium = all.reduce((sum, option) => sum + optionDerived(option).netPremium, 0);
@@ -2679,7 +2797,7 @@ function reviewCheckpointsForRecommendation(recommendation, actionLabel, status,
 function handleRecommendationAction(action, recommendationId) { const index = state.recommendations.findIndex(item => item.id === recommendationId); if (index < 0) return; const recommendation = state.recommendations[index]; const promptReason = window.prompt(`Motivo para marcar la recomendación como ${recommendationActionLabel(action).toLowerCase()}:`, recommendation.reason || ''); const reason = promptReason ?? recommendation.reason ?? ''; const nextStatus = action === 'accept' ? 'accepted' : action === 'execute' ? 'executed' : action === 'postpone' ? 'postponed' : 'discarded'; state.recommendations[index] = migrateRecommendation({ ...recommendation, status: nextStatus, reason, decidedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); state.decisionReviews = [...reviewCheckpointsForRecommendation(recommendation, recommendationActionLabel(action), nextStatus, reason), ...(state.decisionReviews || []).filter(item => item.recommendationId !== recommendationId)].map(migrateDecisionReview); saveState(); renderAdvisorCenter(); renderSortableHeaders(); showNotice(`Recomendación ${recommendationActionLabel(action).toLowerCase()}.`); }
 function undoLastImport() { if (!state.lastImportUndo?.snapshot) { showNotice('No hay ninguna importación que deshacer.'); return; } const snapshot = state.lastImportUndo.snapshot; state.portfolio = (snapshot.portfolio || []).map(migratePosition).filter(Boolean); state.transactions = (snapshot.transactions || []).map(migrateTransaction).filter(Boolean); state.options = (snapshot.options || []).map(migrateOptionPosition).filter(Boolean); state.recommendations = (snapshot.recommendations || []).map(migrateRecommendation).filter(Boolean); state.decisionReviews = (snapshot.decisionReviews || []).map(migrateDecisionReview).filter(Boolean); state.advisor = { ...defaultAdvisorState(snapshot.settings || DEFAULT_SETTINGS), ...(snapshot.advisor || {}) }; state.history = (snapshot.history || []).map(migrateSnapshot).filter(Boolean); state.assets = (snapshot.assets || []).map(migrateAsset).filter(Boolean); state.liabilities = (snapshot.liabilities || []).map(migrateLiability).filter(Boolean); state.reportHistory = (snapshot.reportHistory || []).map(migrateReportEntry).filter(Boolean); state.settings = migrateSettings(snapshot.settings); state.lastImport = snapshot.lastImport || null; state.lastTransactionsImport = snapshot.lastTransactionsImport || null; state.lastBackupAt = snapshot.lastBackupAt || null; state.lastImportUndo = null; saveState(); render(); showNotice('Se ha restaurado la copia previa a la última importación.'); }
 function optionsOpenRiskLines() {
-  const open = state.options.filter(option => ['open', 'rolled'].includes(option.status));
+  const open = visibleOptions().filter(option => ['open', 'rolled'].includes(option.status));
   if (!open.length) return ['- Sin posiciones abiertas.'];
   const lines = [];
   open.forEach(option => {
@@ -2691,7 +2809,7 @@ function optionsOpenRiskLines() {
 }
 function optionsClosedThisMonthLines() {
   const monthKey = currentMonthKey();
-  const closed = state.options.filter(option => option.closedAt && option.closedAt.slice(0, 7) === monthKey);
+  const closed = visibleOptions().filter(option => option.closedAt && option.closedAt.slice(0, 7) === monthKey);
   if (!closed.length) return ['- Sin operaciones cerradas este mes.'];
   return closed.map(option => `- ${option.underlying || option.ticker}: ${OPTION_STATUS_LABELS[option.status] || option.status} el ${dateEs(option.closedAt)} | resultado ${option.realizedResult === null || option.realizedResult === undefined ? 'incorporado a cartera' : eur.format(option.realizedResult)}`);
 }
