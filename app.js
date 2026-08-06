@@ -766,6 +766,25 @@ const PLAN_TARGET_TYPES = [
   { id: 'networth', label: 'Patrimonio neto' },
   { id: 'dividends', label: 'Dividendos anuales' }
 ];
+function renderPlanTeaser() {
+  const card = $('#planTeaserCard');
+  const gapNode = $('#planTeaserGap');
+  const etaNode = $('#planTeaserEta');
+  const metaNode = $('#planTeaserMeta');
+  if (!card || !gapNode || !etaNode || !metaNode) return;
+  const plan = computePlan();
+  const hasTarget = plan.targetValue !== null;
+  if (!hasTarget) {
+    gapNode.textContent = '--';
+    etaNode.textContent = '--';
+    metaNode.textContent = 'Configura una meta en Plan para ver tu previsión aquí.';
+    return;
+  }
+  const targetLabel = PLAN_TARGET_TYPES.find(type => type.id === plan.targetType)?.label || 'tu meta';
+  gapNode.textContent = plan.gap <= 0 ? 'Cubierto' : eur.format(plan.gap);
+  etaNode.textContent = plan.central.years !== null ? `${plan.central.years} años (${plan.central.eta})` : 'Más de 40 años';
+  metaNode.textContent = plan.gap <= 0 ? `Objetivo de ${targetLabel.toLowerCase()} ya cubierto con los datos actuales.` : `Escenario central hacia ${targetLabel.toLowerCase()}.`;
+}
 function computePlanForType(targetType, metrics, monthlyContribution, monthlyExpense, horizonYears) {
   const targetValue = targetType === 'networth' ? state.settings.targetNetWorth : targetType === 'dividends' ? state.settings.targetAnnualDividends : (monthlyExpense ? monthlyExpense * 12 : null);
   const currentValue = targetType === 'networth' ? metrics.netWorth : metrics.dividends;
@@ -1622,7 +1641,12 @@ $('#confirmOk')?.addEventListener('click', () => {
   if (action) action();
 });
 $$('.nav-item[data-view]').forEach(button => button.addEventListener('click', () => switchView(button.dataset.view)));
-$$('[data-go]').forEach(button => button.addEventListener('click', () => switchView(button.dataset.go)));
+document.addEventListener('click', event => {
+  const goButton = event.target.closest('[data-go]');
+  if (goButton) { switchView(goButton.dataset.go); return; }
+  const closeMonthButton = event.target.closest('[data-checklist-action="close-month"]');
+  if (closeMonthButton) openMonthlyClose();
+});
 $$('.sub-nav-item').forEach(button => button.addEventListener('click', () => switchOptionsSubview(button.dataset.subview)));
 ['#searchInput', '#sectorFilter', '#countryFilter', '#currencyFilter', '#statusFilter'].forEach(selector => {
   $(selector)?.addEventListener('input', renderPortfolio);
@@ -2401,6 +2425,35 @@ function executiveVerdict(recommendations) {
   else focus = 'mantener el ritmo de aportaciones y la disciplina de diversificación actual';
   return `La situación patrimonial es ${overallLabel} (${score.value}/100), pero ahora mismo la prioridad es ${focus}.`;
 }
+function buildOnboardingChecklist() {
+  const items = [];
+  if (!state.portfolio.length) {
+    items.push({ id: 'import', text: 'Importa tu cartera real desde DivvyDiary para empezar a ver KPIs y recomendaciones.', actionLabel: 'Ir a Cartera', go: 'portfolio' });
+  }
+  const hasGoal = Boolean(state.settings.targetAnnualDividends || state.settings.targetNetWorth || state.settings.monthlyExpense);
+  if (!hasGoal) {
+    items.push({ id: 'goal', text: 'Define al menos un objetivo financiero para ver tu progreso y previsión.', actionLabel: 'Ir a Datos', go: 'settings' });
+  }
+  ['owner-2', 'owner-family'].forEach(id => {
+    if (!ownerHasRealPortfolio(id) && !state.portfolioEstimates[id]) {
+      items.push({ id: `estimate-${id}`, text: `Añade una estimación de cartera para ${ownerName(id)} si no vas a importar sus datos reales.`, actionLabel: 'Ir a Datos', go: 'settings' });
+    }
+  });
+  if (state.portfolio.length && !existingSnapshotForMonth()) {
+    items.push({ id: 'close', text: 'Guarda el cierre del mes actual para alimentar el histórico y las previsiones.', actionLabel: 'Guardar cierre', closeMonth: true });
+  }
+  return items;
+}
+function renderOnboardingChecklist() {
+  const card = $('#onboardingCard');
+  const rows = $('#onboardingRows');
+  if (!card || !rows) return;
+  const items = buildOnboardingChecklist();
+  card.hidden = !items.length;
+  if (!items.length) return;
+  rows.className = 'signal-list';
+  rows.innerHTML = items.map(item => `<div class="signal-row signal-warn"><strong>${escapeHtml(item.text)}</strong><span>${item.closeMonth ? `<wa-button size="small" appearance="plain" data-checklist-action="close-month">${escapeHtml(item.actionLabel)}</wa-button>` : `<wa-button size="small" appearance="plain" data-go="${item.go}">${escapeHtml(item.actionLabel)}</wa-button>`}</span></div>`).join('');
+}
 function executiveDiagnosis(recommendations) {
   const metrics = fullMetrics();
   const { liquidityAvailable, requiredLiquidity, options } = advisorSignals();
@@ -2497,6 +2550,8 @@ function render() {
   applyOwnerView();
   renderDashboard();
   renderOwnerBreakdown();
+  renderOnboardingChecklist();
+  renderPlanTeaser();
   renderAdvisorCenter();
   renderPortfolio();
   renderTransactions();

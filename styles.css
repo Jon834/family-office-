@@ -455,6 +455,32 @@ td {
   margin-top: 2px;
 }
 
+.owner-select-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.owner-hint {
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.group-title {
+  margin: 28px 0 -4px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.group-title:first-of-type {
+  margin-top: 8px;
+}
+
 .positive {
   color: var(--success);
 }
