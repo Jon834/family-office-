@@ -32,7 +32,9 @@
         <wa-select id="ownerViewSelect" size="small" class="owner-select" aria-label="Ver patrimonio de"><wa-option value="all">Consolidado</wa-option><wa-option value="owner-1">Yo</wa-option><wa-option value="owner-2">Mi pareja</wa-option><wa-option value="owner-family">Familiar conjunto</wa-option></wa-select>
         <small class="owner-hint">Filtra todo el patrimonio por propietario</small>
       </div>
-      <wa-button id="themeBtn" appearance="plain" aria-label="Cambiar tema"><wa-icon name="moon"></wa-icon></wa-button>
+      <wa-button id="globalSearchBtn" appearance="plain" aria-label="Buscar"><wa-icon slot="start" name="magnifying-glass"></wa-icon></wa-button>
+      <button id="notificationsBtn" class="notif-btn" aria-label="Notificaciones"><wa-icon name="bell"></wa-icon><span id="notificationsBadge" class="notif-badge" hidden>0</span></button>
+      <wa-button id="themeBtn" appearance="plain" aria-label="Cambiar tema"><wa-icon slot="start" name="moon"></wa-icon></wa-button>
       <wa-button id="undoImportBtn" appearance="outlined" hidden><wa-icon slot="start" name="rotate-left"></wa-icon>Deshacer importación</wa-button>
       <wa-button id="importBtn" variant="brand"><wa-icon slot="start" name="file-import"></wa-icon>Importar DivvyDiary</wa-button>
     </div>
@@ -113,6 +115,7 @@
       <div class="section-head"><div><p class="eyebrow">CARTERA</p><h1>Posiciones de DivvyDiary</h1><p>La sincronización usa el ISIN, conserva notas y permite editar cada posición.</p></div><div class="inline-actions"><wa-button id="transactionsImportBtn" appearance="outlined"><wa-icon slot="start" name="receipt"></wa-icon>Importar transacciones</wa-button><wa-button id="portfolioImportBtn" variant="brand"><wa-icon slot="start" name="file-import"></wa-icon>Importar CSV</wa-button></div></div>
       <wa-card class="panel controls controls-wide"><wa-input id="searchInput" label="Buscar" placeholder="Empresa, ticker o ISIN" clearable></wa-input><wa-select id="sectorFilter" label="Sector"><wa-option value="">Todos</wa-option></wa-select><wa-select id="countryFilter" label="País"><wa-option value="">Todos</wa-option></wa-select><wa-select id="currencyFilter" label="Divisa"><wa-option value="">Todas</wa-option></wa-select><wa-select id="statusFilter" label="Estado" value="active"><wa-option value="active">Activas</wa-option><wa-option value="watch">Seguimiento</wa-option><wa-option value="archived">Archivadas</wa-option><wa-option value="all">Todas</wa-option></wa-select></wa-card>
       <wa-card class="panel"><div class="table-wrap"><table class="portfolio-table"><thead><tr><th>Empresa</th><th>Cantidad</th><th>Precio medio</th><th>Precio</th><th>Valor</th><th>Ganancia</th><th>Peso</th><th>Div. anual</th><th>Yield</th><th>YOC</th><th>Próximo pago</th><th></th></tr></thead><tbody id="portfolioRows"><tr><td colspan="12" class="empty-cell">Importa un CSV de DivvyDiary.</td></tr></tbody></table></div></wa-card>
+      <wa-card class="panel"><div class="panel-head"><div><h2>Exposición por divisa</h2><p>Divisa de negociación de cada posición, no la exposición económica real de la empresa</p></div></div><div id="currencyExposureChart" class="bar-chart empty-state">Sin datos</div><small class="muted-copy">Una empresa cotizada en EUR puede facturar en otras divisas: esto es solo la divisa de cotización.</small></wa-card>
       <div class="dashboard-grid decision-grid">
         <wa-card class="panel">
           <div class="panel-head"><div><h2>Actividad de capital</h2><p>Compras, ventas y despliegue de liquidez</p></div></div>
@@ -229,6 +232,7 @@
           <wa-card class="panel"><div class="panel-head"><div><h2>Resultado por año</h2></div></div><div id="statByYear" class="signal-list empty-state">Sin datos</div></wa-card>
           <wa-card class="panel"><div class="panel-head"><div><h2>Resultado por divisa</h2></div></div><div id="statByCurrency" class="signal-list empty-state">Sin datos</div></wa-card>
         </div>
+        <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Benchmark de opciones</h2><p>Compara la rentabilidad de tu operativa con un benchmark configurable (efectivo, ETF Core o índice de referencia)</p></div></div><form id="optionsBenchmarkForm" class="inline-form"><wa-input id="optionsBenchmarkRateInput" label="Rentabilidad anual del benchmark (%)" hint="Ej. 8 para un 8% anual" inputmode="decimal"></wa-input><div class="full-width"><wa-button type="submit" variant="brand">Guardar benchmark</wa-button></div></form><div id="optionsBenchmark" class="summary-stack empty-state">Sin datos</div></wa-card>
       </div>
     </section>
 
@@ -303,7 +307,9 @@
         <wa-card class="panel"><div class="panel-head"><div><h2>Composición por motor</h2><p>Qué parte de la renta viene de cada fuente</p></div></div><div id="rentasComposition" class="bar-chart empty-state">Sin datos</div></wa-card>
         <wa-card class="panel"><div class="panel-head"><div><h2>Renta de opciones</h2><p>Primas cobradas frente a resultado neto y renta normalizada</p></div></div><div id="rentasOptions" class="summary-stack empty-state">Sin datos</div></wa-card>
       </div>
-      <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Estimación fiscal simple</h2><p>Tasa plana orientativa, no sustituye una declaración real</p></div></div><form id="rentasTaxForm" class="inline-form"><wa-input id="rentasTaxRate" label="Tasa estimada" hint="Ej. 19 para 19%" inputmode="decimal"></wa-input><div class="full-width"><wa-button type="submit" variant="brand">Guardar tasa</wa-button></div></form></wa-card>
+      <wa-card class="panel"><div class="panel-head"><div><h2>Crecimiento de renta</h2><p>Qué inversiones están haciendo crecer realmente tu renta (CAGR de dividendo importado de DivvyDiary)</p></div></div><div id="incomeGrowthRanking" class="scenario-list empty-state">Sin datos</div></wa-card>
+      <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Fiscalidad estimada</h2><p>Estimación orientativa por tipo de renta, no sustituye una declaración real ni a un asesor fiscal</p></div></div><form id="rentasTaxForm" class="inline-form"><wa-input id="rentasTaxRate" label="Tasa de destino estimada" hint="Ej. 19 para 19% (España)" inputmode="decimal"></wa-input><div class="full-width"><wa-button type="submit" variant="brand">Guardar tasa</wa-button></div></form><div class="table-wrap"><table><thead><tr><th>Renta</th><th>Bruto</th><th>Retención origen</th><th>Retención destino</th><th>Neto</th></tr></thead><tbody id="fiscalBreakdownRows"><tr><td colspan="5" class="empty-cell">Sin datos</td></tr></tbody></table></div></wa-card>
+      <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Retención en origen por país</h2><p>Para dividendos extranjeros. Los valores por defecto son orientativos y editables</p></div></div><form id="taxOverrideForm" class="inline-form"><wa-input id="taxOverrideCountry" label="País" placeholder="ej. Estados Unidos"></wa-input><wa-input id="taxOverrideRate" label="Retención (%)" inputmode="decimal"></wa-input><div class="full-width"><wa-button type="submit" variant="brand">Guardar retención</wa-button></div></form><div class="table-wrap"><table><thead><tr><th>País</th><th>Retención</th><th>Origen</th><th></th></tr></thead><tbody id="taxOverrideRows"><tr><td colspan="4" class="empty-cell">Sin datos</td></tr></tbody></table></div></wa-card>
     </section>
     <section id="settings" class="view">
       <div class="section-head"><div><p class="eyebrow">DATOS Y PRIVACIDAD</p><h1>Copias, patrimonio y objetivos</h1><p>La información permanece en este navegador. GitHub Pages no recibe tus datos.</p></div></div>
@@ -313,6 +319,7 @@
         <wa-card class="action-card"><wa-icon name="file-export"></wa-icon><h2>Exportar copia JSON</h2><p>Guarda cartera, cierres mensuales, activos, deudas, informes y configuración.</p><wa-button id="exportJsonBtn" appearance="outlined">Descargar copia</wa-button></wa-card>
         <wa-card class="action-card"><wa-icon name="file-import"></wa-icon><h2>Restaurar copia JSON</h2><p>Recupera los datos en este u otro dispositivo.</p><wa-button id="restoreJsonBtn" appearance="outlined">Seleccionar archivo</wa-button></wa-card>
         <wa-card class="action-card"><wa-icon name="flask"></wa-icon><h2>Cargar demo guiada</h2><p>Rellena la app con un año de datos de ejemplo para ver asesor, prioridades y revisiones.</p><wa-button id="loadDemoBtn" appearance="outlined">Cargar demo</wa-button></wa-card>
+        <wa-card class="action-card"><wa-icon name="signs-post"></wa-icon><h2>Onboarding guiado</h2><p>Recorrido paso a paso para configurar tu Family Office desde cero.</p><wa-button id="startOnboardingBtn" appearance="outlined">Iniciar recorrido</wa-button></wa-card>
         <wa-card class="action-card"><wa-icon name="robot"></wa-icon><h2>Informe para ChatGPT</h2><p>Genera un Markdown y guarda un registro histórico del informe.</p><wa-button id="markdownBtn" variant="brand">Descargar informe</wa-button></wa-card>
       </div>
       <h2 class="group-title">Patrimonio manual</h2>
@@ -325,6 +332,8 @@
       <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Cartera estimada</h2><p>Solo tú importas cartera y transacciones reales. Para el resto de propietarios sin importación, indica una estimación de su cartera (valor, coste y %RPD actual) para incluirla en los totales consolidados.</p></div></div><form id="portfolioEstimateForm" class="inline-form"><wa-select id="estimateOwner" label="Propietario" value="owner-2"><wa-option value="owner-2">Mi pareja</wa-option><wa-option value="owner-family">Familiar conjunto</wa-option></wa-select><wa-input id="estimateValue" label="Valor total cartera (EUR)" inputmode="decimal"></wa-input><wa-input id="estimateCost" label="Coste total (EUR)" inputmode="decimal"></wa-input><wa-input id="estimateYield" label="%RPD actual" hint="Rentabilidad por dividendo, ej. 3,5" inputmode="decimal"></wa-input><div class="full-width"><wa-button type="submit" variant="brand">Guardar estimación</wa-button></div></form><div class="table-wrap"><table><thead><tr><th>Propietario</th><th>Valor</th><th>Coste</th><th>%RPD</th><th>Estado</th><th></th></tr></thead><tbody id="portfolioEstimateRows"><tr><td colspan="6" class="empty-cell">Sin estimaciones guardadas.</td></tr></tbody></table></div></wa-card>
       <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Objetivos financieros</h2><p>Se usan para progreso de dividendos, score e independencia financiera. Indica cada importe con la periodicidad señalada en su etiqueta.</p></div></div><form id="settingsForm" class="inline-form four-cols"><wa-input id="monthlyExpenseInput" label="Gasto mensual (EUR/mes)" hint="Gasto familiar recurrente por mes" inputmode="decimal"></wa-input><wa-input id="targetDividendInput" label="Objetivo anual de dividendos (EUR/año)" hint="Dividendos brutos que quieres cobrar en 12 meses" inputmode="decimal"></wa-input><wa-input id="targetNetWorthInput" label="Objetivo de patrimonio neto (EUR totales)" hint="Importe total a alcanzar, no mensual" inputmode="decimal"></wa-input><wa-input id="monthlyContributionInput" label="Aportación mensual prevista (EUR/mes)" hint="Lo que aportas cada mes a la cartera" inputmode="decimal"></wa-input><wa-input id="targetMonthlyIncomeInput" label="Objetivo de renta mensual neta (EUR/mes)" hint="Dividendos + opciones + intereses + alquiler, netos" inputmode="decimal"></wa-input><div class="full-width"><wa-button type="submit" variant="brand">Guardar objetivos</wa-button></div></form></wa-card>
       <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Histórico de informes</h2><p>Permite comparar recomendaciones y evolución de la cartera mes a mes.</p></div></div><div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Score</th><th>Patrimonio neto</th><th>Dividendos</th><th>Concentración</th></tr></thead><tbody id="reportRows"><tr><td colspan="5" class="empty-cell">Todavía no hay informes generados.</td></tr></tbody></table></div></wa-card>
+      <h2 class="group-title">Regulatory Watch</h2>
+      <wa-card class="panel form-panel"><div class="panel-head"><div><h2>Seguimiento normativo</h2><p>Registro manual de cambios regulatorios que pueden afectar a tu fiscalidad o tus cuentas (ej. Savings &amp; Investments Union UE)</p></div></div><form id="regulatoryForm" class="stack-form"><div class="inline-form"><wa-input id="regulatoryTitle" label="Título"></wa-input><wa-input id="regulatoryDate" label="Fecha" type="date"></wa-input><wa-select id="regulatoryStatus" label="Estado" value="watching"><wa-option value="watching">En seguimiento</wa-option><wa-option value="confirmed">Confirmado</wa-option><wa-option value="applied">Aplicado</wa-option><wa-option value="discarded">Descartado</wa-option></wa-select></div><wa-input id="regulatoryImpact" label="Impacto potencial" placeholder="ej. Fiscalidad ETF / dividendos / cuentas de inversión"></wa-input><wa-textarea id="regulatoryNotes" label="Notas" rows="2"></wa-textarea><wa-input id="regulatoryLink" label="Enlace externo (opcional)" placeholder="https://..."></wa-input><wa-button type="submit" variant="brand">Añadir seguimiento</wa-button></form><div id="regulatoryRows" class="scenario-list empty-state">Sin entradas todavía.</div></wa-card>
       <h2 class="group-title">Zona de peligro</h2>
       <wa-card class="action-card danger-card"><wa-icon name="trash"></wa-icon><h2>Borrar datos locales</h2><p>Elimina definitivamente la información de este navegador.</p><wa-button id="clearBtn" variant="danger" appearance="outlined">Borrar todo</wa-button></wa-card>
     </section>
@@ -449,8 +458,73 @@
   <wa-dialog id="accountDetailDialog" label="Detalle de la cuenta"><div class="stack-form"><h3 id="accountDetailTitle">Cuenta</h3><div id="accountDetailSummary" class="summary-stack empty-state">Sin datos</div><div id="accountQuarterlyStatus" class="signal-list empty-state" hidden></div><h3>Regla trimestral</h3><div class="inline-form"><wa-checkbox id="accountRuleActive">Activa</wa-checkbox><wa-input id="accountRuleMinOps" label="Operaciones mínimas por trimestre" inputmode="numeric"></wa-input><wa-input id="accountRuleCondition" label="Condición (texto libre)"></wa-input></div><h3>Contenido de la cuenta</h3><div id="accountDetailRows" class="table-wrap"><table><thead><tr><th>Elemento</th><th>Tipo</th><th>Valor</th></tr></thead><tbody id="accountDetailBody"><tr><td colspan="3" class="empty-cell">Sin elementos asociados.</td></tr></tbody></table></div></div><wa-button slot="footer" id="accountDetailDeleteBtn" variant="danger" appearance="outlined">Eliminar cuenta</wa-button><wa-button slot="footer" id="accountDetailSaveBtn" variant="brand">Guardar</wa-button></wa-dialog>
   <wa-dialog id="projectDetailDialog" label="Detalle del proyecto"><div class="stack-form"><h3 id="projectDetailTitle">Proyecto</h3><div id="projectDetailSummary" class="summary-stack empty-state">Sin datos</div><div id="projectTimelineView" class="project-timeline empty-state">Sin datos</div><h3>Aportaciones</h3><div class="inline-form"><wa-input id="projectContributionAmount" label="Importe (EUR)" inputmode="decimal"></wa-input><wa-input id="projectContributionDate" label="Fecha" type="date"></wa-input><wa-input id="projectContributionNotes" label="Notas"></wa-input><wa-button id="projectAddContributionBtn" appearance="outlined">Añadir aportación</wa-button></div><div id="projectContributionRows" class="scenario-list empty-state">Sin aportaciones.</div><h3>Compromisos futuros</h3><div class="inline-form"><wa-input id="projectObligationAmount" label="Importe (EUR)" inputmode="decimal"></wa-input><wa-input id="projectObligationDate" label="Fecha límite" type="date"></wa-input><wa-input id="projectObligationNotes" label="Notas"></wa-input><wa-button id="projectAddObligationBtn" appearance="outlined">Añadir compromiso</wa-button></div><div id="projectObligationRows" class="scenario-list empty-state">Sin compromisos.</div><h3>Motor hipotecario</h3><p class="muted-copy">Comparativa orientativa por tipo de interés, a partir de la hipoteca prevista.</p><div class="inline-form"><wa-input id="projectMortgageTerm" label="Plazo (años)" inputmode="numeric" value="25"></wa-input><wa-button id="projectMortgageCalcBtn" appearance="outlined">Calcular escenarios</wa-button></div><div id="projectMortgageTable" class="table-wrap empty-state">Sin cálculo todavía.</div><div id="projectMortgageImpact" class="summary-stack empty-state"></div></div><wa-button slot="footer" id="projectDetailDeleteBtn" variant="danger" appearance="outlined">Eliminar proyecto</wa-button><wa-button slot="footer" id="projectDetailCloseBtn" variant="brand">Cerrar</wa-button></wa-dialog>
   <wa-dialog id="capitalAllocatorDialog" label="¿Qué hago con el dinero de este mes?"><div class="stack-form"><div class="inline-form"><wa-input id="capitalAllocatorAmount" label="Capital disponible este mes (EUR)" inputmode="decimal"></wa-input><wa-button id="capitalAllocatorRunBtn" variant="brand">Proponer asignación</wa-button></div><div id="capitalAllocatorResult" class="scenario-list empty-state">Indica el capital disponible y pulsa "Proponer asignación".</div></div><wa-button slot="footer" id="capitalAllocatorCloseBtn" appearance="plain">Cerrar</wa-button></wa-dialog>
+  <wa-dialog id="notificationsDialog" label="Pendientes" light-dismiss>
+    <div id="notificationsResults" class="scenario-list empty-state">Sin pendientes ahora mismo.</div>
+    <wa-button slot="footer" appearance="plain" id="notificationsCloseBtn">Cerrar</wa-button>
+  </wa-dialog>
+  <wa-dialog id="globalSearchDialog" label="Buscar" light-dismiss>
+    <wa-input id="globalSearchInput" placeholder="Empresa, ISIN, cuenta, proyecto, operación..." clearable autofocus></wa-input>
+    <div id="globalSearchResults" class="scenario-list empty-state">Escribe para buscar en toda la app.</div>
+    <wa-button slot="footer" appearance="plain" id="globalSearchCloseBtn">Cerrar</wa-button>
+  </wa-dialog>
+  <wa-dialog id="onboardingDialog" label="Configura tu Family Office" light-dismiss>
+    <div class="wizard-steps">
+      <div class="wizard-step" data-onboarding-dot="1">1</div>
+      <div class="wizard-step" data-onboarding-dot="2">2</div>
+      <div class="wizard-step" data-onboarding-dot="3">3</div>
+      <div class="wizard-step" data-onboarding-dot="4">4</div>
+      <div class="wizard-step" data-onboarding-dot="5">5</div>
+      <div class="wizard-step" data-onboarding-dot="6">6</div>
+    </div>
+    <div id="onboardingStep1" class="onboarding-step">
+      <h3>¿Quién forma parte de tu Family Office?</h3>
+      <p class="muted-copy">Los tres propietarios ya existen en la app (tú, tu pareja y el patrimonio familiar conjunto). Puedes personalizar sus nombres aquí.</p>
+      <div class="inline-form"><wa-input id="onboardingOwner1" label="Propietario individual 1"></wa-input><wa-input id="onboardingOwner2" label="Propietario individual 2"></wa-input><wa-input id="onboardingOwnerFamily" label="Familiar conjunto"></wa-input></div>
+    </div>
+    <div id="onboardingStep2" class="onboarding-step" hidden>
+      <h3>Añade tus cuentas</h3>
+      <p class="muted-copy">ING, Interactive Brokers, MyInvestor... cada cuenta es un bróker o banco donde tienes activos.</p>
+      <wa-button data-onboarding-go="accounts" appearance="outlined"><wa-icon slot="start" name="building-columns"></wa-icon>Ir a Cuentas</wa-button>
+    </div>
+    <div id="onboardingStep3" class="onboarding-step" hidden>
+      <h3>Importa tu cartera</h3>
+      <p class="muted-copy">Desde DivvyDiary, usando el botón de la cabecera.</p>
+      <wa-button id="onboardingImportBtn" appearance="outlined"><wa-icon slot="start" name="file-import"></wa-icon>Importar DivvyDiary</wa-button>
+    </div>
+    <div id="onboardingStep4" class="onboarding-step" hidden>
+      <h3>Añade liquidez y deudas</h3>
+      <p class="muted-copy">Efectivo, fondos monetarios, letras, hipotecas y otros préstamos, en la pestaña Datos.</p>
+      <wa-button data-onboarding-go="settings" appearance="outlined"><wa-icon slot="start" name="gear"></wa-icon>Ir a Datos</wa-button>
+    </div>
+    <div id="onboardingStep5" class="onboarding-step" hidden>
+      <h3>Define tu objetivo</h3>
+      <p class="muted-copy">Por ejemplo, generar 2.000 € netos al mes. Se configura en la pestaña Plan.</p>
+      <wa-button data-onboarding-go="plan" appearance="outlined"><wa-icon slot="start" name="bullseye"></wa-icon>Ir a Plan</wa-button>
+    </div>
+    <div id="onboardingStep6" class="onboarding-step" hidden>
+      <h3>Configura próximos compromisos</h3>
+      <p class="muted-copy">Un proyecto como una compra de vivienda, con sus pagos previstos. Se configura en Cuentas → Proyectos.</p>
+      <wa-button data-onboarding-go="accounts" appearance="outlined"><wa-icon slot="start" name="road"></wa-icon>Ir a Proyectos</wa-button>
+    </div>
+    <wa-button slot="footer" id="onboardingSkipBtn" appearance="plain">Omitir</wa-button>
+    <wa-button slot="footer" id="onboardingBackBtn" appearance="outlined" hidden>Atrás</wa-button>
+    <wa-button slot="footer" id="onboardingNextBtn" variant="brand">Siguiente</wa-button>
+    <wa-button slot="footer" id="onboardingFinishBtn" variant="brand" hidden>Ir al Asesor</wa-button>
+  </wa-dialog>
   <wa-dialog id="confirmDialog" label="Confirmación"><p id="confirmText"></p><wa-button slot="footer" id="confirmCancel" appearance="plain">Cancelar</wa-button><wa-button slot="footer" id="confirmOk" variant="danger">Confirmar</wa-button></wa-dialog>
   <div id="notice" class="notice" role="status" aria-live="polite"></div>
+  <div class="quick-actions-wrap">
+    <div id="quickActionsMenu" class="quick-actions-menu" hidden>
+      <button class="quick-action-item" data-quick-action="income"><wa-icon name="sack-dollar"></wa-icon>Registrar ingreso</button>
+      <button class="quick-action-item" data-quick-action="asset"><wa-icon name="wallet"></wa-icon>Añadir activo</button>
+      <button class="quick-action-item" data-quick-action="liability"><wa-icon name="file-invoice-dollar"></wa-icon>Añadir deuda</button>
+      <button class="quick-action-item" data-quick-action="transaction"><wa-icon name="receipt"></wa-icon>Registrar operación</button>
+      <button class="quick-action-item" data-quick-action="option"><wa-icon name="layer-group"></wa-icon>Registrar opción</button>
+      <button class="quick-action-item" data-quick-action="commitment"><wa-icon name="road"></wa-icon>Añadir compromiso</button>
+      <button class="quick-action-item" data-quick-action="close"><wa-icon name="camera"></wa-icon>Guardar cierre</button>
+    </div>
+    <button id="quickActionsFab" class="quick-actions-fab" aria-label="Acciones rápidas" aria-haspopup="true"><wa-icon name="plus"></wa-icon></button>
+  </div>
 </body>
 </html>
 
