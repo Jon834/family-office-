@@ -10,6 +10,15 @@ const OPTION_OBJECTIVES = ['buy_lower', 'income', 'protect', 'speculate_up', 'sp
 const OPTION_STATUS_LABELS = { proposal: 'Propuesta', open: 'Abierta', closed: 'Cerrada', expired: 'Vencida sin valor', assigned: 'Asignada', exercised: 'Ejercida', rolled: 'Rolada', cancelled: 'Cancelada' };
 const OWNER_IDS = ['owner-1', 'owner-2', 'owner-family'];
 const DEFAULT_OWNER_NAMES = { 'owner-1': 'Yo', 'owner-2': 'Mi pareja', 'owner-family': 'Familiar conjunto' };
+const ACCOUNT_TYPES = ['broker', 'bank', 'fund_platform', 'pension', 'joint_account', 'child_portfolio', 'other'];
+const ACCOUNT_TYPE_LABELS = { broker: 'Bróker', bank: 'Banco', fund_platform: 'Plataforma de fondos', pension: 'Plan de pensiones', joint_account: 'Cuenta conjunta', child_portfolio: 'Cartera de hijos', other: 'Otra' };
+const ACCOUNT_PURPOSES = ['long_term_income', 'options', 'liquidity', 'emergency', 'children', 'retirement', 'project', 'mixed'];
+const ACCOUNT_PURPOSE_LABELS = { long_term_income: 'Renta a largo plazo', options: 'Opciones', liquidity: 'Liquidez', emergency: 'Emergencia', children: 'Hijos', retirement: 'Jubilación', project: 'Proyecto', mixed: 'Mixta' };
+const UNASSIGNED_ACCOUNT_ID = 'unassigned';
+const POSITION_ROLES = ['core', 'income', 'growth', 'satellite', 'hedge', 'liquidity'];
+const POSITION_ROLE_LABELS = { core: 'Core', income: 'Renta', growth: 'Crecimiento', satellite: 'Satélite', hedge: 'Cobertura', liquidity: 'Liquidez' };
+const PROJECT_TYPES = ['property_purchase', 'children_portfolio', 'fi', 'future_purchase', 'education', 'other'];
+const PROJECT_TYPE_LABELS = { property_purchase: 'Compra de inmueble', children_portfolio: 'Cartera de hijos', fi: 'Independencia financiera', future_purchase: 'Compra futura', education: 'Educación', other: 'Otro' };
 const ANALYSIS_PROMPT_PATH = './chatgpt-analysis-prompt.md';
 const DEFAULT_ANALYSIS_PROMPT = [
   '# Análisis patrimonial para ChatGPT',
@@ -38,7 +47,9 @@ const DEFAULT_SETTINGS = {
   monthlyExpense: null,
   targetAnnualDividends: null,
   targetNetWorth: null,
-  monthlyContribution: null
+  monthlyContribution: null,
+  targetMonthlyIncome: null,
+  incomeTaxRateEstimate: null
 };
 const DEFAULT_TABLE_SORTS = {
   topPositions: { key: 'allocation', dir: 'desc' },
@@ -156,6 +167,9 @@ let pendingImport = null;
 let pendingTransactionImport = null;
 let confirmAction = null;
 let editingPositionId = null;
+let editingAccountId = null;
+let editingProjectId = null;
+let capitalAllocatorProposal = null;
 let deferredWorker = null;
 let analysisPromptCache = null;
 const historyFilterState = { preset: 'all', fromYear: '', toYear: '' };
@@ -179,6 +193,38 @@ function defaultLiability() {
     type: 'mortgage',
     value: null,
     notes: '',
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function defaultAccount() {
+  return {
+    id: `account-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: '',
+    ownerId: 'owner-1',
+    type: 'broker',
+    currency: 'EUR',
+    purpose: 'mixed',
+    active: true,
+    notes: '',
+    quarterlyRule: { active: false, frequencyMonths: 3, minOps: 1, startDate: null, conditionText: '' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function defaultProject() {
+  return {
+    id: `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: '',
+    type: 'future_purchase',
+    ownership: defaultOwnership(),
+    deliveryDate: null,
+    mortgageExpected: null,
+    contributions: [],
+    obligations: [],
+    notes: '',
+    createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
 }
@@ -424,6 +470,8 @@ function migrateSettings(settings) {
   next.targetAnnualDividends = toNum(next.targetAnnualDividends, null);
   next.targetNetWorth = toNum(next.targetNetWorth, null);
   next.monthlyContribution = toNum(next.monthlyContribution, null);
+  next.targetMonthlyIncome = toNum(next.targetMonthlyIncome, null);
+  next.incomeTaxRateEstimate = normalizePercentLike(next.incomeTaxRateEstimate, null);
   return next;
 }
 
@@ -438,6 +486,8 @@ function migrateAsset(asset) {
     value: toNum(asset.value, null),
     notes: cleanText(asset.notes),
     ownership: migrateOwnership(asset.ownership),
+    accountId: cleanText(asset.accountId) || UNASSIGNED_ACCOUNT_ID,
+    expectedIncome: toNum(asset.expectedIncome, null),
     updatedAt: asset.updatedAt || new Date().toISOString()
   };
 }
@@ -453,7 +503,68 @@ function migrateLiability(liability) {
     value: toNum(liability.value, null),
     notes: cleanText(liability.notes),
     ownership: migrateOwnership(liability.ownership),
+    accountId: cleanText(liability.accountId) || UNASSIGNED_ACCOUNT_ID,
     updatedAt: liability.updatedAt || new Date().toISOString()
+  };
+}
+
+function migrateQuarterlyRule(raw) {
+  const base = { active: false, frequencyMonths: 3, minOps: 1, startDate: null, conditionText: '' };
+  if (!raw || typeof raw !== 'object') return base;
+  return {
+    active: Boolean(raw.active),
+    frequencyMonths: toNum(raw.frequencyMonths, 3) || 3,
+    minOps: toNum(raw.minOps, 1) || 1,
+    startDate: normalizeDate(raw.startDate) || null,
+    conditionText: cleanText(raw.conditionText)
+  };
+}
+
+function migrateAccount(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    id: raw.id || defaultAccount().id,
+    name: cleanText(raw.name) || 'Cuenta sin nombre',
+    ownerId: OWNER_IDS.includes(raw.ownerId) ? raw.ownerId : 'owner-1',
+    type: ACCOUNT_TYPES.includes(raw.type) ? raw.type : 'broker',
+    currency: normalizeCurrency(raw.currency),
+    purpose: ACCOUNT_PURPOSES.includes(raw.purpose) ? raw.purpose : 'mixed',
+    active: raw.active !== false,
+    notes: cleanText(raw.notes),
+    quarterlyRule: migrateQuarterlyRule(raw.quarterlyRule),
+    createdAt: raw.createdAt || new Date().toISOString(),
+    updatedAt: raw.updatedAt || new Date().toISOString()
+  };
+}
+
+function migrateProjectContribution(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const amount = toNum(raw.amount, null);
+  if (amount === null) return null;
+  return { id: raw.id || `contribution-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, amount, date: normalizeDate(raw.date) || null, notes: cleanText(raw.notes) };
+}
+
+function migrateProjectObligation(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const amount = toNum(raw.amount, null);
+  if (amount === null) return null;
+  return { id: raw.id || `obligation-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, amount, dueDate: normalizeDate(raw.dueDate) || null, notes: cleanText(raw.notes), paid: Boolean(raw.paid) };
+}
+
+function migrateProject(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    id: raw.id || defaultProject().id,
+    name: cleanText(raw.name) || 'Proyecto sin nombre',
+    type: PROJECT_TYPES.includes(raw.type) ? raw.type : 'other',
+    ownership: migrateOwnership(raw.ownership),
+    deliveryDate: normalizeDate(raw.deliveryDate) || null,
+    mortgageExpected: toNum(raw.mortgageExpected, null),
+    contributions: Array.isArray(raw.contributions) ? raw.contributions.map(migrateProjectContribution).filter(Boolean) : [],
+    obligations: Array.isArray(raw.obligations) ? raw.obligations.map(migrateProjectObligation).filter(Boolean) : [],
+    notes: cleanText(raw.notes),
+    createdAt: raw.createdAt || new Date().toISOString(),
+    updatedAt: raw.updatedAt || new Date().toISOString()
   };
 }
 
@@ -519,6 +630,9 @@ function migratePosition(position) {
     unreliableMatch: !isin,
     fallbackKey: buildFallbackKey(symbol, name),
     ownership: migrateOwnership(position.ownership),
+    accountId: cleanText(position.accountId) || UNASSIGNED_ACCOUNT_ID,
+    role: POSITION_ROLES.includes(position.role) ? position.role : null,
+    strategic: migrateStrategicTarget(position.strategic),
     createdAt,
     updatedAt,
     archivedAt: position.archivedAt || null,
@@ -737,25 +851,40 @@ function projectPlanScenario(def, metrics, targetType, targetValue, monthlyContr
   }
   return { ...def, years, eta: years === null ? 'Más de 40 años' : `${new Date().getFullYear() + years}`, progressSeries };
 }
+const PLAN_TARGET_RESOLVERS = {
+  fi: { fallback: (settings, monthlyExpense) => monthlyExpense ? monthlyExpense * 12 : null, current: metrics => metrics.dividends },
+  networth: { fallback: settings => settings.targetNetWorth, current: metrics => metrics.netWorth },
+  dividends: { fallback: settings => settings.targetAnnualDividends, current: metrics => metrics.dividends },
+  monthlyIncome: { fallback: settings => settings.targetMonthlyIncome ? settings.targetMonthlyIncome * 12 : null, current: () => rentasSummary().netAnnual }
+};
+function resolvePlanFallback(targetType, monthlyExpense) {
+  const resolver = PLAN_TARGET_RESOLVERS[targetType] || PLAN_TARGET_RESOLVERS.fi;
+  return resolver.fallback(state.settings, monthlyExpense);
+}
+function resolvePlanCurrentValue(targetType, metrics) {
+  const resolver = PLAN_TARGET_RESOLVERS[targetType] || PLAN_TARGET_RESOLVERS.fi;
+  return resolver.current(metrics);
+}
 function computePlan() {
   ensurePlanState();
   const metrics = fullMetrics();
   const plan = state.plan;
   const targetType = plan.targetType;
-  const fallbackTarget = targetType === 'networth' ? state.settings.targetNetWorth : targetType === 'dividends' ? state.settings.targetAnnualDividends : (state.settings.monthlyExpense ? state.settings.monthlyExpense * 12 : null);
+  const fallbackTarget = resolvePlanFallback(targetType, state.settings.monthlyExpense);
   const targetValue = plan.targetValue ?? fallbackTarget;
   const monthlyContribution = plan.monthlyContribution ?? state.settings.monthlyContribution;
   const monthlyExpense = plan.monthlyExpense ?? state.settings.monthlyExpense;
   const horizonYears = plan.horizonYears || 15;
-  const currentValue = targetType === 'networth' ? metrics.netWorth : metrics.dividends;
+  const currentValue = resolvePlanCurrentValue(targetType, metrics);
   const gap = targetValue === null || targetValue === undefined ? null : Math.max(0, targetValue - currentValue);
+  const projectionMetrics = targetType === 'monthlyIncome' ? { ...metrics, dividends: currentValue } : metrics;
   const defs = planScenarioDefs();
-  const scenarios = defs.map(def => projectPlanScenario(def, metrics, targetType, targetValue, monthlyContribution, horizonYears));
+  const scenarios = defs.map(def => projectPlanScenario(def, projectionMetrics, targetType, targetValue, monthlyContribution, horizonYears));
   const central = scenarios.find(s => s.id === 'central');
   const levers = targetValue === null || targetValue === undefined ? [] : [
-    { id: 'contribution-plus', label: '+150 EUR/mes de aportación', years: projectPlanScenario(defs[1], metrics, targetType, targetValue, (monthlyContribution || 0) + 150, horizonYears).years },
-    { id: 'contribution-plus10', label: '+10% de aportación mensual', years: projectPlanScenario(defs[1], metrics, targetType, targetValue, (monthlyContribution || 0) * 1.1, horizonYears).years },
-    { id: 'expense-minus10', label: '-10% de gasto mensual', years: targetType === 'fi' && monthlyExpense ? projectPlanScenario(defs[1], metrics, targetType, monthlyExpense * 0.9 * 12, monthlyContribution, horizonYears).years : central.years }
+    { id: 'contribution-plus', label: '+150 EUR/mes de aportación', years: projectPlanScenario(defs[1], projectionMetrics, targetType, targetValue, (monthlyContribution || 0) + 150, horizonYears).years },
+    { id: 'contribution-plus10', label: '+10% de aportación mensual', years: projectPlanScenario(defs[1], projectionMetrics, targetType, targetValue, (monthlyContribution || 0) * 1.1, horizonYears).years },
+    { id: 'expense-minus10', label: '-10% de gasto mensual', years: targetType === 'fi' && monthlyExpense ? projectPlanScenario(defs[1], projectionMetrics, targetType, monthlyExpense * 0.9 * 12, monthlyContribution, horizonYears).years : central.years }
   ];
   const bestLever = levers.filter(item => item.years !== null).sort((a, b) => a.years - b.years)[0] || null;
   const feasibility = targetValue === null || targetValue === undefined ? null : central.years === null ? 'poco-realista' : central.years <= horizonYears ? 'alcanzable' : central.years <= horizonYears * 1.5 ? 'ajustado' : 'poco-realista';
@@ -764,8 +893,21 @@ function computePlan() {
 const PLAN_TARGET_TYPES = [
   { id: 'fi', label: 'Independencia financiera' },
   { id: 'networth', label: 'Patrimonio neto' },
-  { id: 'dividends', label: 'Dividendos anuales' }
+  { id: 'dividends', label: 'Dividendos anuales' },
+  { id: 'monthlyIncome', label: 'Renta mensual neta' }
 ];
+function planDisplayAmount(targetType, annualValue) {
+  if (annualValue === null || annualValue === undefined) return annualValue;
+  return targetType === 'monthlyIncome' ? annualValue / 12 : annualValue;
+}
+function monthlyIncomeMilestones(currentMonthlyNet) {
+  return [500, 1000, 1500, 2000, 2500].map((level, index) => ({
+    level,
+    label: `Nivel ${index + 1} · ${level} €/mes`,
+    reached: currentMonthlyNet >= level,
+    pct: Math.max(0, Math.min(1, currentMonthlyNet / level))
+  }));
+}
 function renderPlanTeaser() {
   const card = $('#planTeaserCard');
   const gapNode = $('#planTeaserGap');
@@ -781,15 +923,16 @@ function renderPlanTeaser() {
     return;
   }
   const targetLabel = PLAN_TARGET_TYPES.find(type => type.id === plan.targetType)?.label || 'tu meta';
-  gapNode.textContent = plan.gap <= 0 ? 'Cubierto' : eur.format(plan.gap);
+  gapNode.textContent = plan.gap <= 0 ? 'Cubierto' : eur.format(planDisplayAmount(plan.targetType, plan.gap));
   etaNode.textContent = plan.central.years !== null ? `${plan.central.years} años (${plan.central.eta})` : 'Más de 40 años';
   metaNode.textContent = plan.gap <= 0 ? `Objetivo de ${targetLabel.toLowerCase()} ya cubierto con los datos actuales.` : `Escenario central hacia ${targetLabel.toLowerCase()}.`;
 }
 function computePlanForType(targetType, metrics, monthlyContribution, monthlyExpense, horizonYears) {
-  const targetValue = targetType === 'networth' ? state.settings.targetNetWorth : targetType === 'dividends' ? state.settings.targetAnnualDividends : (monthlyExpense ? monthlyExpense * 12 : null);
-  const currentValue = targetType === 'networth' ? metrics.netWorth : metrics.dividends;
+  const targetValue = resolvePlanFallback(targetType, monthlyExpense);
+  const currentValue = resolvePlanCurrentValue(targetType, metrics);
   const gap = targetValue === null || targetValue === undefined ? null : Math.max(0, targetValue - currentValue);
-  const central = projectPlanScenario(planScenarioDefs()[1], metrics, targetType, targetValue, monthlyContribution, horizonYears);
+  const projectionMetrics = targetType === 'monthlyIncome' ? { ...metrics, dividends: currentValue } : metrics;
+  const central = projectPlanScenario(planScenarioDefs()[1], projectionMetrics, targetType, targetValue, monthlyContribution, horizonYears);
   const feasibility = targetValue === null || targetValue === undefined ? null : central.years === null ? 'poco-realista' : central.years <= horizonYears ? 'alcanzable' : central.years <= horizonYears * 1.5 ? 'ajustado' : 'poco-realista';
   return { targetType, targetValue: targetValue ?? null, gap, central, feasibility };
 }
@@ -809,23 +952,25 @@ function renderPlan() {
   if (typeSelect) typeSelect.value = state.plan.targetType;
   const valueInput = $('#planTargetValue');
   if (valueInput) {
-    valueInput.value = formatInputNumber(state.plan.targetValue);
+    valueInput.value = formatInputNumber(planDisplayAmount(state.plan.targetType, state.plan.targetValue));
     const monthlyExpenseForFallback = state.plan.monthlyExpense ?? state.settings.monthlyExpense;
     const fallbackByType = {
       fi: monthlyExpenseForFallback ? monthlyExpenseForFallback * 12 : null,
       networth: state.settings.targetNetWorth,
-      dividends: state.settings.targetAnnualDividends
+      dividends: state.settings.targetAnnualDividends,
+      monthlyIncome: state.settings.targetMonthlyIncome ? state.settings.targetMonthlyIncome * 12 : null
     };
     const fallback = fallbackByType[state.plan.targetType];
-    const labelByType = { fi: 'Valor objetivo — gasto anual a cubrir (EUR/año)', networth: 'Valor objetivo — patrimonio neto (EUR totales)', dividends: 'Valor objetivo — dividendos anuales (EUR/año)' };
+    const labelByType = { fi: 'Valor objetivo — gasto anual a cubrir (EUR/año)', networth: 'Valor objetivo — patrimonio neto (EUR totales)', dividends: 'Valor objetivo — dividendos anuales (EUR/año)', monthlyIncome: 'Valor objetivo — renta neta mensual (EUR/mes)' };
     const hintByType = {
       fi: fallback !== null ? `Vacío = automático: ${eur.format(fallback)} (12 × tu gasto mensual).` : 'Gasto anual a cubrir con dividendos. Configura tu gasto mensual para calcularlo automáticamente.',
       networth: fallback !== null ? `Vacío = usa tu objetivo guardado en Datos: ${eur.format(fallback)}.` : 'Patrimonio neto total a alcanzar (EUR totales, no mensual).',
-      dividends: fallback !== null ? `Vacío = usa tu objetivo guardado en Datos: ${eur.format(fallback)}.` : 'Dividendos brutos anuales objetivo (EUR/año).'
+      dividends: fallback !== null ? `Vacío = usa tu objetivo guardado en Datos: ${eur.format(fallback)}.` : 'Dividendos brutos anuales objetivo (EUR/año).',
+      monthlyIncome: fallback !== null ? `Vacío = usa tu objetivo guardado en Datos: ${eur.format(fallback / 12)}/mes.` : 'Renta neta mensual objetivo, sumando dividendos, opciones, intereses y alquiler.'
     };
     valueInput.setAttribute('label', labelByType[state.plan.targetType] || labelByType.fi);
     valueInput.setAttribute('hint', hintByType[state.plan.targetType] || hintByType.fi);
-    valueInput.setAttribute('placeholder', fallback !== null ? `Automático: ${eur.format(fallback)}` : 'Sin automático disponible');
+    valueInput.setAttribute('placeholder', fallback !== null ? `Automático: ${eur.format(planDisplayAmount(state.plan.targetType, fallback))}` : 'Sin automático disponible');
   }
   const contributionInput = $('#planMonthlyContribution');
   if (contributionInput) { contributionInput.value = formatInputNumber(state.plan.monthlyContribution); contributionInput.setAttribute('hint', 'Lo que aportas cada mes a la cartera (EUR/mes). Vacío = tu aportación configurada en Datos.'); }
@@ -839,12 +984,22 @@ function renderPlan() {
     const comparison = planComparisonRows();
     const feasibilityLabelsShort = { alcanzable: 'Alcanzable', ajustado: 'Ajustado', 'poco-realista': 'Poco realista' };
     comparisonNode.className = 'scenario-list';
-    comparisonNode.innerHTML = comparison.map(item => `<div class="scenario-card${item.targetType === plan.targetType ? ' active' : ''}"><strong>${escapeHtml(item.label)}</strong><span>${item.targetValue === null ? 'Sin objetivo configurado' : eur.format(item.targetValue)}</span><small>${item.targetValue === null ? 'Configuralo en Datos u objetivo especifico.' : `Brecha: ${eur.format(item.gap)}`}</small><small>${item.central.years === null ? 'Más de 40 años' : `${item.central.years} años (${item.central.eta})`} | ${item.feasibility ? feasibilityLabelsShort[item.feasibility] : 'Sin datos'}</small></div>`).join('');
+    comparisonNode.innerHTML = comparison.map(item => `<div class="scenario-card${item.targetType === plan.targetType ? ' active' : ''}"><strong>${escapeHtml(item.label)}</strong><span>${item.targetValue === null ? 'Sin objetivo configurado' : eur.format(planDisplayAmount(item.targetType, item.targetValue))}</span><small>${item.targetValue === null ? 'Configuralo en Datos u objetivo especifico.' : `Brecha: ${eur.format(planDisplayAmount(item.targetType, item.gap))}`}</small><small>${item.central.years === null ? 'Más de 40 años' : `${item.central.years} años (${item.central.eta})`} | ${item.feasibility ? feasibilityLabelsShort[item.feasibility] : 'Sin datos'}</small></div>`).join('');
   }
-  const targetLabel = plan.targetType === 'networth' ? 'patrimonio neto' : plan.targetType === 'dividends' ? 'dividendos anuales' : 'independencia financiera (dividendos vs. gasto)';
+  const targetLabel = plan.targetType === 'networth' ? 'patrimonio neto' : plan.targetType === 'dividends' ? 'dividendos anuales' : plan.targetType === 'monthlyIncome' ? 'renta mensual neta' : 'independencia financiera (dividendos vs. gasto)';
   const hasTarget = plan.targetValue !== null;
-  $('#planGapValue').textContent = hasTarget ? eur.format(plan.gap) : '0 EUR';
-  $('#planGapMeta').textContent = hasTarget ? `Objetivo de ${targetLabel}: ${eur.format(plan.targetValue)}.` : 'Configura una meta para estimar la distancia.';
+  $('#planGapValue').textContent = hasTarget ? eur.format(planDisplayAmount(plan.targetType, plan.gap)) : '0 EUR';
+  $('#planGapMeta').textContent = hasTarget ? `Objetivo de ${targetLabel}: ${eur.format(planDisplayAmount(plan.targetType, plan.targetValue))}.` : 'Configura una meta para estimar la distancia.';
+  const milestoneCard = $('#planMilestoneCard');
+  if (milestoneCard) {
+    milestoneCard.hidden = plan.targetType !== 'monthlyIncome';
+    if (plan.targetType === 'monthlyIncome') {
+      const currentMonthly = planDisplayAmount('monthlyIncome', plan.currentValue);
+      const milestones = monthlyIncomeMilestones(currentMonthly);
+      $('#planMilestoneRows').className = 'milestone-list';
+      $('#planMilestoneRows').innerHTML = milestones.map(m => `<div class="milestone-row${m.reached ? ' reached' : ''}"><strong>${m.reached ? '✅' : ''} ${escapeHtml(m.label)}</strong><span class="progress-bar"><span class="progress-bar-fill" style="width:${Math.round(m.pct * 100)}%"></span></span><small>${formatPercent(m.pct)}</small></div>`).join('');
+    }
+  }
   $('#planCentralEta').textContent = hasTarget && plan.central.years !== null ? plan.central.eta : '--';
   $('#planCentralMeta').textContent = hasTarget && plan.central.years !== null ? `${plan.central.years} años con el escenario central.` : 'Sin proyección.';
   $('#planBestLeverValue').textContent = plan.bestLever ? plan.bestLever.label : '--';
@@ -870,7 +1025,7 @@ function renderPlan() {
   const narrative = [];
   if (!hasTarget) narrative.push('Configura un objetivo y una meta en EUR para ver la simulación completa.');
   else {
-    narrative.push(plan.gap <= 0 ? 'El objetivo ya está cubierto con los datos actuales.' : `Faltan ${eur.format(plan.gap)} para alcanzar el objetivo de ${targetLabel}.`);
+    narrative.push(plan.gap <= 0 ? 'El objetivo ya está cubierto con los datos actuales.' : `Faltan ${eur.format(planDisplayAmount(plan.targetType, plan.gap))} para alcanzar el objetivo de ${targetLabel}.`);
     narrative.push(plan.central.years === null ? 'En el escenario central no se alcanza la meta dentro de 40 años con los supuestos actuales.' : `En el escenario central se alcanzaría en ${plan.central.years} años (${plan.central.eta}).`);
     if (plan.bestLever && plan.central.years !== null && plan.bestLever.years < plan.central.years) narrative.push(`La palanca con mayor impacto es "${plan.bestLever.label}", que adelantaría la meta a ${plan.bestLever.years} años.`);
   }
@@ -885,6 +1040,42 @@ function renderPlan() {
   ];
   assumptionsNode.className = 'signal-list';
   assumptionsNode.innerHTML = assumptions.map(item => `<div class="signal-row signal-good"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div>`).join('');
+  renderMacroScenario();
+}
+const MACRO_SCENARIOS = [
+  { id: 'base', label: 'Escenario base', equityDropPct: 0, dividendCutPct: 0, recoveryYears: 0 },
+  { id: 'crisis-ia', label: 'Crisis IA', equityDropPct: 0.30, dividendCutPct: 0.08, recoveryYears: 3 },
+  { id: 'estanflacion', label: 'Estanflación', equityDropPct: 0.10, dividendCutPct: 0.05, recoveryYears: 5 },
+  { id: 'crisis-global', label: 'Crisis global', equityDropPct: 0.40, dividendCutPct: 0.20, recoveryYears: 4 }
+];
+function applyMacroScenario(scenarioId) {
+  const scenario = MACRO_SCENARIOS.find(s => s.id === scenarioId) || MACRO_SCENARIOS[0];
+  const metrics = fullMetrics();
+  const stressedValue = metrics.value * (1 - scenario.equityDropPct);
+  const stressedNetWorth = metrics.netWorth - (metrics.value - stressedValue);
+  const stressedMonthlyIncome = rentasSummary().monthlyNet * (1 - scenario.dividendCutPct);
+  ensurePlanState();
+  const plan = state.plan;
+  const targetType = plan.targetType;
+  const stressedDividends = metrics.dividends * (1 - scenario.dividendCutPct);
+  const projectionMetrics = { ...metrics, value: stressedValue, netWorth: stressedNetWorth, dividends: targetType === 'monthlyIncome' ? stressedMonthlyIncome * 12 : stressedDividends };
+  const monthlyContribution = plan.monthlyContribution ?? state.settings.monthlyContribution;
+  const horizonYears = plan.horizonYears || 15;
+  const targetValue = plan.targetValue ?? resolvePlanFallback(targetType, plan.monthlyExpense ?? state.settings.monthlyExpense);
+  const central = targetValue ? projectPlanScenario(planScenarioDefs()[1], projectionMetrics, targetType, targetValue, monthlyContribution, horizonYears) : null;
+  return { scenario, netWorth: stressedNetWorth, monthlyIncome: stressedMonthlyIncome, fiEta: central && central.years !== null ? `${central.years} años (${central.eta})` : 'Sin proyección', maxDrop: scenario.equityDropPct };
+}
+function renderMacroScenario() {
+  const select = $('#macroScenarioSelect');
+  if (!select) return;
+  const result = applyMacroScenario(select.value);
+  $('#macroNetWorth').textContent = eur.format(result.netWorth);
+  $('#macroMonthlyIncome').textContent = eur.format(result.monthlyIncome);
+  $('#macroFiDate').textContent = result.fiEta;
+  $('#macroMaxDrop').textContent = result.maxDrop ? `-${Math.round(result.maxDrop * 100)} %` : '0 %';
+  const assumptionsNode = $('#macroAssumptions');
+  assumptionsNode.className = 'signal-list';
+  assumptionsNode.innerHTML = `<div class="signal-row"><strong>Caída de renta variable</strong><span>-${Math.round(result.scenario.equityDropPct * 100)} %</span></div><div class="signal-row"><strong>Recorte de renta (dividendos/opciones)</strong><span>-${Math.round(result.scenario.dividendCutPct * 100)} %</span></div><div class="signal-row"><strong>Años estimados de recuperación</strong><span>${result.scenario.recoveryYears}</span></div>`;
 }
 function reportHistoryRows() { return [...state.reportHistory].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); }
 function saveReportHistoryEntry(entry) { state.reportHistory = [entry, ...state.reportHistory].slice(0, 24); }
@@ -1128,7 +1319,7 @@ function renderHistory() {
 }
 function renderAssets() { const rows = sortRows(visibleAssets(), 'assets'); $('#assetRows').innerHTML = rows.length ? rows.map(asset => `<tr><td>${escapeHtml(asset.name)}<br><small class="owner-tag">${escapeHtml(ownerLabel(asset))}</small></td><td>${escapeHtml(asset.type)}</td><td>${eur.format(asset.value || 0)}</td><td>${escapeHtml(asset.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-asset="${asset.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay activos adicionales.</td></tr>'; }
 function renderLiabilities() { const rows = sortRows(visibleLiabilities(), 'liabilities'); $('#liabilityRows').innerHTML = rows.length ? rows.map(liability => `<tr><td>${escapeHtml(liability.name)}<br><small class="owner-tag">${escapeHtml(ownerLabel(liability))}</small></td><td>${escapeHtml(liability.type)}</td><td>${eur.format(liability.value || 0)}</td><td>${escapeHtml(liability.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-liability="${liability.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay deudas registradas.</td></tr>'; }
-function renderSettings() { $('#monthlyExpenseInput').value = formatInputNumber(state.settings.monthlyExpense); $('#targetDividendInput').value = formatInputNumber(state.settings.targetAnnualDividends); $('#targetNetWorthInput').value = formatInputNumber(state.settings.targetNetWorth); $('#monthlyContributionInput').value = formatInputNumber(state.settings.monthlyContribution); if ($('#ownerName1')) { $('#ownerName1').value = ownerName('owner-1'); $('#ownerName2').value = ownerName('owner-2'); $('#ownerNameFamily').value = ownerName('owner-family'); } renderPortfolioEstimateRows(); }
+function renderSettings() { $('#monthlyExpenseInput').value = formatInputNumber(state.settings.monthlyExpense); $('#targetDividendInput').value = formatInputNumber(state.settings.targetAnnualDividends); $('#targetNetWorthInput').value = formatInputNumber(state.settings.targetNetWorth); $('#monthlyContributionInput').value = formatInputNumber(state.settings.monthlyContribution); if ($('#targetMonthlyIncomeInput')) $('#targetMonthlyIncomeInput').value = formatInputNumber(state.settings.targetMonthlyIncome); if ($('#ownerName1')) { $('#ownerName1').value = ownerName('owner-1'); $('#ownerName2').value = ownerName('owner-2'); $('#ownerNameFamily').value = ownerName('owner-family'); } renderPortfolioEstimateRows(); }
 function saveOwnerNames(event) {
   event.preventDefault();
   state.ownerNames = migrateOwnerNames({
@@ -1284,6 +1475,47 @@ function updateMonthlyClosePreview() {
   $('#monthlyClosePreviewLiquidity').textContent = eur.format(metrics.liquidity);
   $('#monthlyClosePreviewDebt').textContent = eur.format(metrics.liabilities);
   $('#monthlyClosePreviewDividends').textContent = eur.format(metrics.dividends);
+  const previousSnapshots = [...state.history].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const previous = previousSnapshots.length ? previousSnapshots[previousSnapshots.length - 1] : null;
+  const narrativeNode = $('#monthlyCloseResultNarrative');
+  if (!narrativeNode) return;
+  const lines = [];
+  if (previous) {
+    const netWorthDelta = relativeDelta(metrics.netWorth, previous.netWorth);
+    lines.push(`Patrimonio neto: ${netWorthDelta === null ? eur.format(metrics.netWorth) : formatPercent(netWorthDelta)} frente al cierre anterior.`);
+    const dividendsDelta = relativeDelta(metrics.dividends, previous.dividends);
+    lines.push(`Dividendos anuales: ${dividendsDelta === null ? eur.format(metrics.dividends) : formatPercent(dividendsDelta)} frente al cierre anterior.`);
+  } else {
+    lines.push('Este es tu primer cierre mensual: no hay comparación previa todavía.');
+  }
+  const plan = computePlan();
+  if (plan.targetValue !== null) lines.push(`Progreso hacia tu objetivo: ${plan.gap <= 0 ? 'cubierto' : `${eur.format(planDisplayAmount(plan.targetType, plan.gap))} de brecha restante`}.`);
+  const topSignal = advisorSignals().signals.find(s => s.tone === 'risk') || advisorSignals().signals.find(s => s.tone === 'warn');
+  lines.push(topSignal ? `Principal riesgo a vigilar: ${topSignal.title} (${topSignal.name}).` : 'Sin riesgos destacados este mes.');
+  narrativeNode.className = 'summary-stack';
+  narrativeNode.innerHTML = lines.map(line => `<small>${escapeHtml(line)}</small>`).join('');
+}
+const MONTHLY_CLOSE_STEPS = ['monthlyCloseStep1', 'monthlyCloseStep2', 'monthlyCloseStep3', 'monthlyCloseStep4', 'monthlyCloseStep5'];
+let monthlyCloseStepIndex = 0;
+function goToMonthlyCloseStep(index) {
+  monthlyCloseStepIndex = Math.max(0, Math.min(MONTHLY_CLOSE_STEPS.length - 1, index));
+  MONTHLY_CLOSE_STEPS.forEach((id, i) => { const node = $(`#${id}`); if (node) node.hidden = i !== monthlyCloseStepIndex; });
+  $$('.wizard-step').forEach(dot => {
+    const dotIndex = Number(dot.dataset.stepDot) - 1;
+    dot.classList.toggle('active', dotIndex === monthlyCloseStepIndex);
+    dot.classList.toggle('done', dotIndex < monthlyCloseStepIndex);
+  });
+  $('#monthlyCloseBackBtn').hidden = monthlyCloseStepIndex === 0;
+  const isLast = monthlyCloseStepIndex === MONTHLY_CLOSE_STEPS.length - 1;
+  $('#monthlyCloseNextBtn').hidden = isLast;
+  $('#confirmMonthlyCloseBtn').hidden = !isLast;
+  if (monthlyCloseStepIndex === 2) {
+    const summary = rentasSummary();
+    const node = $('#monthlyCloseIncomeSummary');
+    node.className = 'summary-stack';
+    node.innerHTML = `<strong>Renta neta mensual estimada: ${eur.format(summary.monthlyNet)}</strong><small>Dividendos: ${eur.format(summary.dividends)}/año | Opciones: ${eur.format(summary.optionsPremium)}/año | Intereses y alquiler: ${eur.format(summary.interestIncome + summary.rentIncome)}/año</small>`;
+  }
+  if (monthlyCloseStepIndex === 4) updateMonthlyClosePreview();
 }
 function openMonthlyClose() {
   const already = existingSnapshotForMonth();
@@ -1308,14 +1540,15 @@ function openMonthlyClose() {
     alreadyNode.hidden = true;
     emptyNode.hidden = true;
     formNode.hidden = false;
-    confirmBtn.hidden = false;
     $('#monthlyClosePortfolioStatus').textContent = state.lastImport ? `Última importación de cartera: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(state.lastImport))}.` : 'Todavía no has importado ninguna cartera de DivvyDiary.';
     $('#monthlyCloseTxStatus').textContent = state.lastTransactionsImport ? `Última importación de transacciones: ${new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(state.lastTransactionsImport))}.` : 'Todavía no has importado transacciones (opcional).';
     const assets = assetTotals();
     $('#monthlyCloseAssetsStatus').textContent = `Liquidez: ${eur.format(assets.liquidity)} | Otros activos: ${eur.format(assets.otherAssets)} | Deuda: ${eur.format(assets.liabilities)}.`;
     $('#monthlyCloseContribution').value = formatInputNumber(state.settings.monthlyContribution);
     $('#monthlyCloseNotes').value = '';
-    updateMonthlyClosePreview();
+    $('#monthlyCloseNoChanges').checked = false;
+    $('#monthlyCloseDecision').value = '';
+    goToMonthlyCloseStep(0);
   }
   $('#monthlyCloseDialog').open = true;
 }
@@ -1325,6 +1558,15 @@ function confirmMonthlyClose() {
   if (!portfolio.length) { showNotice('Importa primero una cartera.'); return; }
   const snapshot = buildMonthlySnapshot({ monthlyContribution: parseLocaleNumber($('#monthlyCloseContribution').value), notes: $('#monthlyCloseNotes').value.trim() });
   state.history.push(snapshot);
+  const decisionText = cleanText($('#monthlyCloseDecision').value);
+  if (decisionText) {
+    const decidedAt = new Date().toISOString();
+    state.decisionReviews = [migrateDecisionReview({
+      title: `Decisión del mes: ${new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(new Date())}`,
+      category: 'Cierre mensual', phase: '3m', status: 'pending', reason: decisionText,
+      createdAt: decidedAt, decidedAt, reviewDate: new Date(Date.now() + 90 * 86400000).toISOString()
+    }), ...state.decisionReviews];
+  }
   saveState();
   renderHistory();
   renderDashboard();
@@ -1384,13 +1626,41 @@ function openPositionDialog(positionId) {
   $('#positionThesis').value = position.thesis || '';
   $('#positionTargetPrice').value = formatInputNumber(position.targetPrice);
   $('#positionStatus').value = normalizeStatus(position.status);
+  populateAccountOptions($('#positionAccount'));
+  $('#positionAccount').value = position.accountId || UNASSIGNED_ACCOUNT_ID;
+  $('#positionRole').value = position.role || '';
+  updatePositionStrategicBlock(position);
   $('#positionDialog').open = true;
+}
+function updatePositionStrategicBlock(position) {
+  const role = $('#positionRole')?.value || '';
+  const block = $('#positionStrategicBlock');
+  if (!block) return;
+  block.hidden = !role;
+  if (!role) return;
+  const strategic = position.strategic || {};
+  $('#positionTargetWeight').value = formatInputNumber(strategic.targetWeight !== null && strategic.targetWeight !== undefined ? strategic.targetWeight * 100 : null);
+  $('#positionTargetAmount').value = formatInputNumber(strategic.targetAmount);
+  $('#positionTargetContribution').value = formatInputNumber(strategic.targetContribution);
+  $('#positionHorizon').value = strategic.horizon || '';
+  $('#positionStrategicThesis').value = strategic.thesis || '';
+  const progress = strategicProgress(position);
+  const progressNode = $('#positionStrategicProgress');
+  if (progress && progress.targetWeight) {
+    progressNode.className = 'summary-stack';
+    progressNode.innerHTML = `<strong>Peso actual ${formatPercent(progress.currentWeight)} de ${formatPercent(progress.targetWeight)}</strong><span class="progress-bar"><span class="progress-bar-fill" style="width:${Math.round((progress.progressPct || 0) * 100)}%"></span></span><small>Progreso: ${formatPercent(progress.progressPct || 0)}${progress.suggestedNextContribution ? ` | Próxima aportación orientativa: ${eur.format(progress.suggestedNextContribution)}` : ''}</small>`;
+  } else {
+    progressNode.className = 'summary-stack empty-state';
+    progressNode.innerHTML = 'Sin objetivo configurado';
+  }
 }
 function savePositionDetails() {
   if (!editingPositionId) return;
   const index = state.portfolio.findIndex(item => item.id === editingPositionId);
   if (index < 0) return;
   const position = state.portfolio[index];
+  const role = $('#positionRole').value || null;
+  const targetWeight = parseLocaleNumber($('#positionTargetWeight').value);
   state.portfolio[index] = {
     ...position,
     notes: $('#positionNotes').value.trim(),
@@ -1398,6 +1668,9 @@ function savePositionDetails() {
     targetPrice: parseLocaleNumber($('#positionTargetPrice').value),
     status: normalizeStatus($('#positionStatus').value),
     archivedAt: normalizeStatus($('#positionStatus').value) === 'archived' ? (position.archivedAt || new Date().toISOString()) : null,
+    accountId: $('#positionAccount').value || UNASSIGNED_ACCOUNT_ID,
+    role,
+    strategic: role ? { targetWeight: targetWeight !== null ? targetWeight / 100 : null, targetAmount: parseLocaleNumber($('#positionTargetAmount').value), targetContribution: parseLocaleNumber($('#positionTargetContribution').value), horizon: $('#positionHorizon').value.trim(), thesis: $('#positionStrategicThesis').value.trim() } : null,
     updatedAt: new Date().toISOString()
   };
   saveState();
@@ -1435,6 +1708,8 @@ function addAsset(event) {
     value,
     notes: $('#assetNotes').value.trim(),
     ownership: readOwnershipControl('asset'),
+    accountId: $('#assetAccount')?.value || UNASSIGNED_ACCOUNT_ID,
+    expectedIncome: parseLocaleNumber($('#assetExpectedIncome')?.value),
     updatedAt: new Date().toISOString()
   });
   saveState();
@@ -1458,6 +1733,7 @@ function addLiability(event) {
     value,
     notes: $('#liabilityNotes').value.trim(),
     ownership: readOwnershipControl('liability'),
+    accountId: $('#liabilityAccount')?.value || UNASSIGNED_ACCOUNT_ID,
     updatedAt: new Date().toISOString()
   });
   saveState();
@@ -1468,6 +1744,400 @@ function addLiability(event) {
   $('#liabilitySharedSplit').hidden = true;
   showNotice('Deuda añadida.');
 }
+function populateAccountOptions(select) {
+  if (!select) return;
+  const current = select.value;
+  const options = ['<wa-option value="unassigned">Sin asignar</wa-option>'].concat(state.accounts.map(a => `<wa-option value="${escapeHtml(a.id)}">${escapeHtml(a.name)} (${escapeHtml(ownerName(a.ownerId))})</wa-option>`));
+  select.innerHTML = options.join('');
+  const validValues = new Set(['unassigned', ...state.accounts.map(a => a.id)]);
+  select.value = validValues.has(current) ? current : 'unassigned';
+}
+function accountSummary(account) {
+  const positions = state.portfolio.filter(p => (p.accountId || UNASSIGNED_ACCOUNT_ID) === account.id && ACTIVE_STATUSES.has(normalizeStatus(p.status)));
+  const value = positions.reduce((sum, p) => sum + (p.marketValue || 0), 0);
+  const dividends = positions.reduce((sum, p) => sum + (p.annualDividend || 0), 0);
+  const assets = state.assets.filter(a => (a.accountId || UNASSIGNED_ACCOUNT_ID) === account.id);
+  const assetsValue = assets.reduce((sum, a) => sum + (a.value || 0), 0);
+  return { value: value + assetsValue, dividends, positionsCount: positions.length, assetsCount: assets.length };
+}
+function renderAccounts() {
+  populateAccountOptions($('#assetAccount'));
+  populateAccountOptions($('#liabilityAccount'));
+  populateAccountOptions($('#positionAccount'));
+  populateAccountOptions($('#anAccount'));
+  const grid = $('#accountGrid');
+  if (!grid) return;
+  const accounts = state.accounts;
+  grid.className = accounts.length ? 'account-grid' : 'account-grid empty-state';
+  grid.innerHTML = accounts.length ? accounts.map(account => {
+    const summary = accountSummary(account);
+    return `<article class="account-card" data-open-account="${account.id}"><strong>${escapeHtml(account.name)}</strong><span class="account-badge">${escapeHtml(ACCOUNT_TYPE_LABELS[account.type] || account.type)}</span><small>${escapeHtml(ownerName(account.ownerId))}</small><span>${eur.format(summary.value)}</span><small>Dividendos: ${eur.format(summary.dividends)} | ${summary.positionsCount} posiciones</small></article>`;
+  }).join('') : 'Sin cuentas todavía.';
+  renderProjects();
+}
+function addAccount(event) {
+  event.preventDefault();
+  const name = cleanText($('#accountName').value);
+  if (!name) { showNotice('Indica un nombre para la cuenta.'); return; }
+  state.accounts.unshift({
+    ...defaultAccount(),
+    id: crypto.randomUUID?.() || `account-${Date.now()}`,
+    name,
+    ownerId: $('#accountOwner').value || 'owner-1',
+    type: $('#accountType').value || 'broker',
+    purpose: $('#accountPurpose').value || 'mixed',
+    currency: $('#accountCurrency').value || 'EUR',
+    notes: cleanText($('#accountNotes').value)
+  });
+  saveState();
+  render();
+  $('#accountForm').reset();
+  $('#accountOwner').value = 'owner-1';
+  $('#accountType').value = 'broker';
+  $('#accountPurpose').value = 'mixed';
+  $('#accountCurrency').value = 'EUR';
+  showNotice('Cuenta añadida.');
+}
+function currentQuarterRange(date = new Date()) {
+  const quarter = Math.floor(date.getMonth() / 3);
+  const start = new Date(date.getFullYear(), quarter * 3, 1);
+  const end = new Date(date.getFullYear(), quarter * 3 + 3, 0);
+  return { start, end, quarter: quarter + 1, year: date.getFullYear() };
+}
+function quarterlyRuleStatus(account) {
+  const rule = account.quarterlyRule;
+  if (!rule || !rule.active) return null;
+  const { start, end, quarter, year } = currentQuarterRange();
+  const startStr = start.toISOString().slice(0, 10);
+  const endStr = end.toISOString().slice(0, 10);
+  const qualifyingOps = state.transactions.filter(tx => tx.accountId === account.id && tx.date >= startStr && tx.date <= endStr).length;
+  const qualifies = qualifyingOps >= (rule.minOps || 1);
+  const daysRemaining = Math.max(0, Math.round((end - new Date()) / 86400000));
+  return {
+    qualifies,
+    daysRemaining,
+    tone: qualifies ? 'good' : (daysRemaining <= 14 ? 'risk' : 'warn'),
+    label: `Q${quarter} ${year}`,
+    detail: qualifies ? `${qualifyingOps} operación(es) registrada(s) este trimestre.` : (rule.conditionText ? rule.conditionText : `Quedan ${daysRemaining} días para el cierre del trimestre.`)
+  };
+}
+function openAccountDetail(id) {
+  const account = state.accounts.find(a => a.id === id);
+  if (!account) return;
+  editingAccountId = id;
+  $('#accountDetailTitle').textContent = account.name;
+  const summary = accountSummary(account);
+  const summaryNode = $('#accountDetailSummary');
+  summaryNode.className = 'summary-stack';
+  summaryNode.innerHTML = `<strong>${eur.format(summary.value)}</strong><small>Dividendos anuales: ${eur.format(summary.dividends)}</small><small>${escapeHtml(ownerName(account.ownerId))} · ${escapeHtml(ACCOUNT_TYPE_LABELS[account.type] || account.type)} · ${escapeHtml(ACCOUNT_PURPOSE_LABELS[account.purpose] || account.purpose)}</small>`;
+  $('#accountRuleActive').checked = account.quarterlyRule.active;
+  $('#accountRuleMinOps').value = account.quarterlyRule.minOps;
+  $('#accountRuleCondition').value = account.quarterlyRule.conditionText;
+  const statusNode = $('#accountQuarterlyStatus');
+  const status = quarterlyRuleStatus(account);
+  if (status) {
+    statusNode.hidden = false;
+    statusNode.className = 'signal-list';
+    statusNode.innerHTML = `<div class="rule-status-card rule-status-${status.qualifies ? 'ok' : 'warn'}"><strong>${status.qualifies ? '✅ Operación realizada' : '⚠️ Operación pendiente'}</strong><span>${escapeHtml(status.label)}</span><small>${escapeHtml(status.detail)}</small></div>`;
+  } else {
+    statusNode.hidden = true;
+  }
+  const rows = [
+    ...state.portfolio.filter(p => (p.accountId || UNASSIGNED_ACCOUNT_ID) === id).map(p => ({ name: p.name, type: 'Posición', value: eur.format(p.marketValue || 0) })),
+    ...state.assets.filter(a => (a.accountId || UNASSIGNED_ACCOUNT_ID) === id).map(a => ({ name: a.name, type: 'Activo', value: eur.format(a.value || 0) })),
+    ...state.liabilities.filter(l => (l.accountId || UNASSIGNED_ACCOUNT_ID) === id).map(l => ({ name: l.name, type: 'Deuda', value: eur.format(l.value || 0) })),
+    ...state.options.filter(o => (o.accountId || UNASSIGNED_ACCOUNT_ID) === id).map(o => ({ name: `${o.underlying || 'Opción'} ${o.optionType}`, type: 'Opción', value: OPTION_STATUS_LABELS[o.status] || o.status }))
+  ];
+  $('#accountDetailBody').innerHTML = rows.length ? rows.map(r => `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.type)}</td><td>${escapeHtml(String(r.value))}</td></tr>`).join('') : '<tr><td colspan="3" class="empty-cell">Sin elementos asociados.</td></tr>';
+  $('#accountDetailDialog').open = true;
+}
+function saveAccountDetail() {
+  const account = state.accounts.find(a => a.id === editingAccountId);
+  if (!account) return;
+  account.quarterlyRule.active = $('#accountRuleActive').checked;
+  account.quarterlyRule.minOps = toNum($('#accountRuleMinOps').value, 1) || 1;
+  account.quarterlyRule.conditionText = cleanText($('#accountRuleCondition').value);
+  account.updatedAt = new Date().toISOString();
+  saveState();
+  render();
+  $('#accountDetailDialog').open = false;
+  showNotice('Cuenta actualizada.');
+}
+function projectTotals(project) {
+  const paid = (project.contributions || []).reduce((sum, c) => sum + (c.amount || 0), 0);
+  const pending = (project.obligations || []).filter(o => !o.paid).reduce((sum, o) => sum + (o.amount || 0), 0);
+  return { paid, pending };
+}
+function nextCommitment(project) {
+  const today = new Date().toISOString().slice(0, 10);
+  const pending = (project.obligations || []).filter(o => !o.paid && o.dueDate).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  return pending.find(o => o.dueDate >= today) || pending[0] || null;
+}
+function renderProjects() {
+  const list = $('#projectList');
+  if (!list) return;
+  const projects = state.projects;
+  list.className = projects.length ? 'scenario-list' : 'scenario-list empty-state';
+  list.innerHTML = projects.length ? projects.map(project => {
+    const totals = projectTotals(project);
+    const next = nextCommitment(project);
+    return `<div class="scenario-card" data-open-project="${project.id}"><strong>${escapeHtml(project.name)}</strong><span>${project.deliveryDate ? dateEs(project.deliveryDate) : 'Sin fecha'}</span><small>${escapeHtml(ownerLabel(project))} · ${escapeHtml(PROJECT_TYPE_LABELS[project.type] || project.type)}</small><small>Pagado: ${eur.format(totals.paid)} | Pendiente: ${eur.format(totals.pending)}</small>${next ? `<small>Próximo compromiso: ${eur.format(next.amount)} · ${dateEs(next.dueDate)}</small>` : ''}</div>`;
+  }).join('') : 'Sin proyectos todavía.';
+}
+function addProject(event) {
+  event.preventDefault();
+  const name = cleanText($('#projectName').value);
+  if (!name) { showNotice('Indica un nombre para el proyecto.'); return; }
+  state.projects.unshift({
+    ...defaultProject(),
+    id: crypto.randomUUID?.() || `project-${Date.now()}`,
+    name,
+    type: $('#projectType').value || 'future_purchase',
+    ownership: readOwnershipControl('project'),
+    deliveryDate: $('#projectDeliveryDate').value || null,
+    mortgageExpected: parseLocaleNumber($('#projectMortgageExpected').value),
+    notes: cleanText($('#projectNotes').value)
+  });
+  saveState();
+  render();
+  $('#projectForm').reset();
+  $('#projectOwner').value = 'owner-1';
+  $('#projectSharedSplit').hidden = true;
+  showNotice('Proyecto añadido.');
+}
+function renderProjectTimeline(project) {
+  const node = $('#projectTimelineView');
+  if (!node) return;
+  const events = [];
+  (project.contributions || []).forEach(c => events.push({ date: c.date, label: `Aportación ${eur.format(c.amount)}`, kind: 'contribution' }));
+  (project.obligations || []).forEach(o => events.push({ date: o.dueDate, label: `${o.paid ? 'Pagado' : 'Pendiente'} ${eur.format(o.amount)}`, kind: 'obligation' }));
+  if (project.deliveryDate) events.push({ date: project.deliveryDate, label: 'Entrega prevista', kind: 'delivery' });
+  const withDates = events.filter(e => e.date).sort((a, b) => a.date.localeCompare(b.date));
+  node.className = withDates.length ? 'project-timeline' : 'project-timeline empty-state';
+  node.innerHTML = withDates.length ? withDates.map(e => `<div class="project-timeline-year"><div class="project-timeline-marker ${e.kind === 'delivery' ? 'delivery' : ''}"></div>${dateEs(e.date)}<br><small>${escapeHtml(e.label)}</small></div>`).join('') : 'Sin fechas registradas.';
+}
+function renderProjectContributions(project) {
+  const node = $('#projectContributionRows');
+  const rows = project.contributions || [];
+  node.className = rows.length ? 'scenario-list' : 'scenario-list empty-state';
+  node.innerHTML = rows.length ? rows.map(c => `<div class="scenario-card"><strong>${eur.format(c.amount)}</strong><span>${c.date ? dateEs(c.date) : '-'}</span><small>${escapeHtml(c.notes || '')}</small></div>`).join('') : 'Sin aportaciones.';
+}
+function renderProjectObligations(project) {
+  const node = $('#projectObligationRows');
+  const rows = project.obligations || [];
+  node.className = rows.length ? 'scenario-list' : 'scenario-list empty-state';
+  node.innerHTML = rows.length ? rows.map(o => `<div class="scenario-card${o.paid ? ' active' : ''}"><strong>${eur.format(o.amount)}</strong><span>${o.dueDate ? dateEs(o.dueDate) : '-'}</span><small>${o.paid ? 'Pagado' : 'Pendiente'}${o.notes ? ' · ' + escapeHtml(o.notes) : ''}</small><wa-button size="small" appearance="plain" data-toggle-obligation="${o.id}">${o.paid ? 'Marcar pendiente' : 'Marcar pagado'}</wa-button></div>`).join('') : 'Sin compromisos.';
+}
+function openProjectDetail(id) {
+  const project = state.projects.find(p => p.id === id);
+  if (!project) return;
+  editingProjectId = id;
+  $('#projectDetailTitle').textContent = project.name;
+  const totals = projectTotals(project);
+  const summaryNode = $('#projectDetailSummary');
+  summaryNode.className = 'summary-stack';
+  summaryNode.innerHTML = `<strong>Pagado: ${eur.format(totals.paid)}</strong><small>Pendiente: ${eur.format(totals.pending)}</small><small>Hipoteca prevista: ${project.mortgageExpected ? eur.format(project.mortgageExpected) : 'Sin definir'}</small><small>${escapeHtml(ownerLabel(project))}</small>`;
+  renderProjectTimeline(project);
+  renderProjectContributions(project);
+  renderProjectObligations(project);
+  $('#projectMortgageTable').className = 'table-wrap empty-state';
+  $('#projectMortgageTable').innerHTML = 'Sin cálculo todavía.';
+  $('#projectMortgageImpact').className = 'summary-stack empty-state';
+  $('#projectMortgageImpact').innerHTML = '';
+  $('#projectDetailDialog').open = true;
+}
+function addProjectContribution() {
+  const project = state.projects.find(p => p.id === editingProjectId);
+  if (!project) return;
+  const amount = parseLocaleNumber($('#projectContributionAmount').value);
+  if (!amount) { showNotice('Indica un importe válido.'); return; }
+  project.contributions.push({ id: crypto.randomUUID?.() || `contribution-${Date.now()}`, amount, date: $('#projectContributionDate').value || null, notes: cleanText($('#projectContributionNotes').value) });
+  project.updatedAt = new Date().toISOString();
+  saveState();
+  renderProjects();
+  openProjectDetail(editingProjectId);
+  $('#projectContributionAmount').value = '';
+  $('#projectContributionDate').value = '';
+  $('#projectContributionNotes').value = '';
+  showNotice('Aportación registrada.');
+}
+function addProjectObligation() {
+  const project = state.projects.find(p => p.id === editingProjectId);
+  if (!project) return;
+  const amount = parseLocaleNumber($('#projectObligationAmount').value);
+  if (!amount) { showNotice('Indica un importe válido.'); return; }
+  project.obligations.push({ id: crypto.randomUUID?.() || `obligation-${Date.now()}`, amount, dueDate: $('#projectObligationDate').value || null, notes: cleanText($('#projectObligationNotes').value), paid: false });
+  project.updatedAt = new Date().toISOString();
+  saveState();
+  renderProjects();
+  openProjectDetail(editingProjectId);
+  $('#projectObligationAmount').value = '';
+  $('#projectObligationDate').value = '';
+  $('#projectObligationNotes').value = '';
+  showNotice('Compromiso registrado.');
+}
+function mortgagePayment(principal, annualRatePct, termYears) {
+  const monthlyRate = (annualRatePct / 100) / 12;
+  const months = termYears * 12;
+  if (!principal || !months) return 0;
+  if (!monthlyRate) return principal / months;
+  return principal * monthlyRate / (1 - Math.pow(1 + monthlyRate, -months));
+}
+function mortgageAmortizationTotals(principal, annualRatePct, termYears) {
+  const monthlyPayment = mortgagePayment(principal, annualRatePct, termYears);
+  const totalPaid = monthlyPayment * termYears * 12;
+  const totalInterest = totalPaid - (principal || 0);
+  return { monthlyPayment, totalInterest, totalPaid };
+}
+function mortgageRateScenarios(principal, termYears, rates = [2, 3, 4, 5]) {
+  return rates.map(rate => ({ rate, ...mortgageAmortizationTotals(principal, rate, termYears) }));
+}
+function investmentCapacityImpact(monthlyPayment) {
+  const before = state.advisor.savingsCapacity || state.settings.monthlyContribution || 0;
+  const after = Math.max(0, before - monthlyPayment);
+  return { before, after, delta: after - before };
+}
+function calcProjectMortgage() {
+  const project = state.projects.find(p => p.id === editingProjectId);
+  if (!project || !project.mortgageExpected) { showNotice('Indica primero la hipoteca prevista del proyecto.'); return; }
+  const term = toNum($('#projectMortgageTerm').value, 25) || 25;
+  const scenarios = mortgageRateScenarios(project.mortgageExpected, term);
+  const table = $('#projectMortgageTable');
+  table.className = 'table-wrap';
+  table.innerHTML = `<table><thead><tr><th>Tasa</th><th>Cuota mensual</th><th>Intereses totales</th><th>Total pagado</th></tr></thead><tbody>${scenarios.map(s => `<tr><td>${s.rate} %</td><td>${eur.format(s.monthlyPayment)}</td><td>${eur.format(s.totalInterest)}</td><td>${eur.format(s.totalPaid)}</td></tr>`).join('')}</tbody></table>`;
+  const central = scenarios[1] || scenarios[0];
+  const impact = investmentCapacityImpact(central.monthlyPayment);
+  const impactNode = $('#projectMortgageImpact');
+  impactNode.className = 'summary-stack';
+  impactNode.innerHTML = `<strong>Impacto sobre capacidad de inversión (a ${central.rate} %)</strong><small>Antes de la hipoteca: ${eur.format(impact.before)}/mes</small><small>Después de la hipoteca: ${eur.format(impact.after)}/mes</small>`;
+}
+function strategicProgress(position) {
+  if (!position.strategic) return null;
+  const currentWeight = position.allocation || 0;
+  const targetWeight = position.strategic.targetWeight;
+  const progressPct = targetWeight ? Math.min(1, currentWeight / targetWeight) : null;
+  const targetAmount = position.strategic.targetAmount;
+  const suggestedNextContribution = targetAmount ? Math.max(0, targetAmount - (position.marketValue || 0)) : null;
+  return { currentWeight, targetWeight, progressPct, suggestedNextContribution };
+}
+function rentasSummary() {
+  const metrics = fullMetrics();
+  const options = optionsSummary();
+  const interestIncome = state.assets.filter(a => ['cash', 'money-market', 'treasury'].includes(a.type)).reduce((sum, a) => sum + (a.expectedIncome || 0), 0);
+  const rentIncome = state.assets.filter(a => !['cash', 'money-market', 'treasury'].includes(a.type)).reduce((sum, a) => sum + (a.expectedIncome || 0), 0);
+  const dividends = metrics.dividends;
+  const optionsPremium = Math.max(0, options.totalPremium);
+  const grossAnnual = dividends + optionsPremium + interestIncome + rentIncome;
+  const taxRate = state.settings.incomeTaxRateEstimate || 0;
+  const netAnnual = grossAnnual * (1 - taxRate);
+  const monthlyNet = netAnnual / 12;
+  const targetMonthly = state.settings.targetMonthlyIncome;
+  const coverage = targetMonthly ? monthlyNet / targetMonthly : null;
+  const composition = [
+    { name: 'Dividendos', value: dividends },
+    { name: 'Opciones', value: optionsPremium },
+    { name: 'Intereses y monetarios', value: interestIncome },
+    { name: 'Alquiler y otros', value: rentIncome }
+  ].filter(item => item.value > 0);
+  const totalComposition = composition.reduce((sum, item) => sum + item.value, 0) || 1;
+  composition.forEach(item => { item.weight = item.value / totalComposition; });
+  return { grossAnnual, netAnnual, monthlyNet, targetMonthly, coverage, dividends, optionsPremium, interestIncome, rentIncome, composition };
+}
+function renderRentas() {
+  const summary = rentasSummary();
+  if (!$('#rentasGross')) return;
+  $('#rentasGross').textContent = eur.format(summary.grossAnnual);
+  $('#rentasGrossMeta').textContent = summary.grossAnnual ? 'Dividendos + opciones + intereses + alquiler.' : 'Sin datos';
+  $('#rentasNet').textContent = eur.format(summary.netAnnual);
+  $('#rentasNetMeta').textContent = state.settings.incomeTaxRateEstimate ? `Tasa estimada aplicada: ${formatPercent(state.settings.incomeTaxRateEstimate)}.` : 'Sin tasa fiscal configurada (0% aplicado).';
+  $('#rentasMonthly').textContent = eur.format(summary.monthlyNet);
+  $('#rentasMonthlyMeta').textContent = 'Renta neta anual dividida entre 12.';
+  $('#rentasGoal').textContent = summary.targetMonthly ? eur.format(summary.targetMonthly) : '--';
+  $('#rentasGoalMeta').textContent = summary.targetMonthly ? 'Configurado en Plan.' : 'Configura un objetivo de renta mensual en Plan.';
+  $('#rentasCoverage').textContent = summary.coverage !== null ? formatPercent(summary.coverage) : '--';
+  $('#rentasCoverageMeta').textContent = summary.coverage !== null ? 'Renta neta mensual sobre el objetivo.' : 'Sin objetivo configurado.';
+  renderBars('#rentasComposition', summary.composition);
+  const options = optionsSummary();
+  const optionsNode = $('#rentasOptions');
+  optionsNode.className = 'summary-stack';
+  optionsNode.innerHTML = `<strong>Primas netas acumuladas: ${eur.format(options.totalPremium)}</strong><small>Primas de posiciones abiertas: ${eur.format(options.openPremium)}</small><small>Capital comprometido en garantías: ${eur.format(options.totalCollateral)}</small><small>Renta normalizada usada arriba: ${eur.format(summary.optionsPremium)} (no incluye primas negativas)</small>`;
+  const rateInput = $('#rentasTaxRate');
+  if (rateInput && document.activeElement !== rateInput) rateInput.value = state.settings.incomeTaxRateEstimate !== null ? num.format(state.settings.incomeTaxRateEstimate * 100) : '';
+}
+function saveRentasTax(event) {
+  event.preventDefault();
+  state.settings.incomeTaxRateEstimate = normalizePercentLike($('#rentasTaxRate').value, null);
+  saveState();
+  render();
+  showNotice('Tasa fiscal estimada guardada.');
+}
+function buildCapitalAllocationProposal(availableCapital) {
+  if (!availableCapital || availableCapital <= 0) return { confident: false, reason: 'Indica un importe de capital disponible mayor que cero.' };
+  const { liquidityAvailable, requiredLiquidity } = advisorSignals();
+  let remaining = availableCapital;
+  const allocations = [];
+  if (liquidityAvailable < requiredLiquidity) {
+    const need = Math.min(remaining, requiredLiquidity - liquidityAvailable);
+    if (need > 0) {
+      allocations.push({ destination: 'Reserva de liquidez', amount: need, motivo: 'La liquidez disponible tras descontar garantías está por debajo del umbral prudente.', impacto: `Acerca la liquidez al objetivo dinámico de ${eur.format(requiredLiquidity)}.` });
+      remaining -= need;
+    }
+  }
+  const strategicPositions = state.portfolio
+    .filter(p => p.role === 'core' && p.strategic && p.strategic.targetAmount && ACTIVE_STATUSES.has(normalizeStatus(p.status)))
+    .map(p => ({ position: p, progress: strategicProgress(p) }))
+    .filter(x => x.progress && x.progress.suggestedNextContribution > 0)
+    .sort((a, b) => (b.progress.targetWeight - b.progress.currentWeight) - (a.progress.targetWeight - a.progress.currentWeight));
+  if (remaining > 0 && strategicPositions.length) {
+    const top = strategicPositions[0];
+    const cap = top.position.strategic.targetContribution || top.progress.suggestedNextContribution;
+    const amount = Math.min(remaining, top.progress.suggestedNextContribution, cap);
+    if (amount > 0) {
+      allocations.push({ destination: `${top.position.name} (ETF Core)`, amount, motivo: `El peso de ${top.position.name} está por debajo del objetivo (${formatPercent(top.progress.currentWeight)} de ${formatPercent(top.progress.targetWeight)}).`, impacto: 'Mejora la diversificación y reduce la concentración relativa.' });
+      remaining -= amount;
+    }
+  }
+  if (!allocations.length) return { confident: false, reason: 'No se puede determinar una compra concreta con suficiente confianza. Añade posiciones marcadas como ETF Core con un objetivo, o revisa tu liquidez mínima en Asesor.' };
+  if (remaining > 0.01) allocations.push({ destination: 'Liquidez / próxima decisión', amount: remaining, motivo: 'El resto no tiene un destino claro con los datos actuales.', impacto: 'Mantiene flexibilidad hasta la próxima revisión.' });
+  return { confident: true, availableCapital, allocations };
+}
+function renderCapitalAllocatorResult() {
+  const node = $('#capitalAllocatorResult');
+  if (!node) return;
+  if (!capitalAllocatorProposal) { node.className = 'scenario-list empty-state'; node.innerHTML = 'Indica el capital disponible y pulsa "Proponer asignación".'; return; }
+  if (!capitalAllocatorProposal.confident) { node.className = 'scenario-list empty-state'; node.innerHTML = escapeHtml(capitalAllocatorProposal.reason); return; }
+  node.className = 'scenario-list';
+  node.innerHTML = capitalAllocatorProposal.allocations.map((a, i) => `<div class="scenario-card"><strong>${escapeHtml(a.destination)}</strong><span>${eur.format(a.amount)}</span><small>Motivo: ${escapeHtml(a.motivo)}</small><small>Impacto: ${escapeHtml(a.impacto)}</small><div class="recommendation-actions"><wa-button size="small" appearance="plain" data-allocator-action="accept" data-allocator-index="${i}">Aceptar</wa-button><wa-button size="small" appearance="plain" data-allocator-action="postpone" data-allocator-index="${i}">Posponer</wa-button><wa-button size="small" appearance="plain" data-allocator-action="reject" data-allocator-index="${i}">Rechazar</wa-button></div></div>`).join('');
+}
+function runCapitalAllocator() {
+  const amount = parseLocaleNumber($('#capitalAllocatorAmount').value);
+  capitalAllocatorProposal = buildCapitalAllocationProposal(amount);
+  renderCapitalAllocatorResult();
+}
+function resolveCapitalAllocation(index, action) {
+  if (!capitalAllocatorProposal || !capitalAllocatorProposal.confident) return;
+  const allocation = capitalAllocatorProposal.allocations[index];
+  if (!allocation) return;
+  if (action === 'reject') { showNotice('Propuesta descartada.'); allocation.resolved = true; renderCapitalAllocatorResult(); return; }
+  if (action === 'postpone') { showNotice('Propuesta pospuesta.'); return; }
+  const decidedAt = new Date().toISOString();
+  const review = migrateDecisionReview({
+    title: `Asignación de capital: ${allocation.destination}`,
+    category: 'Asignación de capital',
+    phase: '3m',
+    actionLabel: eur.format(allocation.amount),
+    status: 'pending',
+    reason: allocation.motivo,
+    expectedOutcome: allocation.impacto,
+    createdAt: decidedAt,
+    decidedAt,
+    reviewDate: new Date(Date.now() + 90 * 86400000).toISOString()
+  });
+  state.decisionReviews = [review, ...state.decisionReviews];
+  saveState();
+  render();
+  showNotice('Decisión registrada en el seguimiento.');
+}
 function saveFinancialSettings(event) {
   event.preventDefault();
   state.settings = {
@@ -1475,7 +2145,8 @@ function saveFinancialSettings(event) {
     monthlyExpense: parseLocaleNumber($('#monthlyExpenseInput').value),
     targetAnnualDividends: parseLocaleNumber($('#targetDividendInput').value),
     targetNetWorth: parseLocaleNumber($('#targetNetWorthInput').value),
-    monthlyContribution: parseLocaleNumber($('#monthlyContributionInput').value)
+    monthlyContribution: parseLocaleNumber($('#monthlyContributionInput').value),
+    targetMonthlyIncome: parseLocaleNumber($('#targetMonthlyIncomeInput').value)
   };
   saveState();
   renderDashboard();
@@ -1583,6 +2254,8 @@ $('#snapshotBtn')?.addEventListener('click', openMonthlyClose);
 $('#historySnapshotBtn')?.addEventListener('click', openMonthlyClose);
 $('#cancelMonthlyCloseBtn')?.addEventListener('click', () => { $('#monthlyCloseDialog').open = false; });
 $('#confirmMonthlyCloseBtn')?.addEventListener('click', confirmMonthlyClose);
+$('#monthlyCloseNextBtn')?.addEventListener('click', () => goToMonthlyCloseStep(monthlyCloseStepIndex + 1));
+$('#monthlyCloseBackBtn')?.addEventListener('click', () => goToMonthlyCloseStep(monthlyCloseStepIndex - 1));
 $('#monthlyCloseImportPortfolioBtn')?.addEventListener('click', () => { $('#monthlyCloseDialog').open = false; openImport(); });
 $('#monthlyCloseImportTxBtn')?.addEventListener('click', () => { $('#monthlyCloseDialog').open = false; openTransactionsImport(); });
 $('#monthlyCloseGoAssetsBtn')?.addEventListener('click', () => { $('#monthlyCloseDialog').open = false; switchView('settings'); });
@@ -1624,6 +2297,47 @@ $('#positionCancelBtn')?.addEventListener('click', () => {
   $('#positionDialog').open = false;
 });
 $('#positionSaveBtn')?.addEventListener('click', savePositionDetails);
+$('#positionRole')?.addEventListener('change', () => { const position = state.portfolio.find(item => item.id === editingPositionId); if (position) updatePositionStrategicBlock(position); });
+$('#accountForm')?.addEventListener('submit', addAccount);
+$('#rentasTaxForm')?.addEventListener('submit', saveRentasTax);
+$('#projectForm')?.addEventListener('submit', addProject);
+bindOwnershipToggle('project');
+$('#accountDetailSaveBtn')?.addEventListener('click', saveAccountDetail);
+$('#accountDetailDeleteBtn')?.addEventListener('click', () => {
+  if (!editingAccountId) return;
+  const account = state.accounts.find(a => a.id === editingAccountId);
+  if (!account) return;
+  askConfirm(`Eliminar la cuenta ${account.name}. Los elementos asociados pasarán a "Sin asignar".`, () => {
+    state.accounts = state.accounts.filter(a => a.id !== editingAccountId);
+    [state.portfolio, state.options, state.assets, state.liabilities, state.transactions].forEach(list => list.forEach(record => { if (record.accountId === editingAccountId) record.accountId = UNASSIGNED_ACCOUNT_ID; }));
+    saveState();
+    render();
+    $('#accountDetailDialog').open = false;
+    editingAccountId = null;
+    showNotice('Cuenta eliminada.');
+  });
+});
+$('#projectDetailCloseBtn')?.addEventListener('click', () => { $('#projectDetailDialog').open = false; editingProjectId = null; });
+$('#projectDetailDeleteBtn')?.addEventListener('click', () => {
+  if (!editingProjectId) return;
+  const project = state.projects.find(p => p.id === editingProjectId);
+  if (!project) return;
+  askConfirm(`Eliminar el proyecto ${project.name}.`, () => {
+    state.projects = state.projects.filter(p => p.id !== editingProjectId);
+    saveState();
+    render();
+    $('#projectDetailDialog').open = false;
+    editingProjectId = null;
+    showNotice('Proyecto eliminado.');
+  });
+});
+$('#projectAddContributionBtn')?.addEventListener('click', addProjectContribution);
+$('#projectAddObligationBtn')?.addEventListener('click', addProjectObligation);
+$('#projectMortgageCalcBtn')?.addEventListener('click', calcProjectMortgage);
+$$('.account-sub-nav-item').forEach(button => button.addEventListener('click', () => {
+  $$('.account-subview').forEach(view => view.classList.toggle('active', view.id === button.dataset.accountSubview));
+  $$('.account-sub-nav-item').forEach(btn => btn.classList.toggle('active', btn === button));
+}));
 $('#dismissUpdateBtn')?.addEventListener('click', hideUpdateNotice);
 $('#updateBtn')?.addEventListener('click', () => {
   const worker = deferredWorker || newWorker;
@@ -1645,7 +2359,25 @@ document.addEventListener('click', event => {
   const goButton = event.target.closest('[data-go]');
   if (goButton) { switchView(goButton.dataset.go); return; }
   const closeMonthButton = event.target.closest('[data-checklist-action="close-month"]');
-  if (closeMonthButton) openMonthlyClose();
+  if (closeMonthButton) { openMonthlyClose(); return; }
+  const openAccountButton = event.target.closest('[data-open-account]');
+  if (openAccountButton) { openAccountDetail(openAccountButton.dataset.openAccount); return; }
+  const openProjectButton = event.target.closest('[data-open-project]');
+  if (openProjectButton) { openProjectDetail(openProjectButton.dataset.openProject); return; }
+  const allocatorButton = event.target.closest('[data-allocator-action]');
+  if (allocatorButton) { resolveCapitalAllocation(Number(allocatorButton.dataset.allocatorIndex), allocatorButton.dataset.allocatorAction); return; }
+  const toggleObligationButton = event.target.closest('[data-toggle-obligation]');
+  if (toggleObligationButton) {
+    const project = state.projects.find(p => p.id === editingProjectId);
+    const obligation = project?.obligations.find(o => o.id === toggleObligationButton.dataset.toggleObligation);
+    if (obligation) {
+      obligation.paid = !obligation.paid;
+      project.updatedAt = new Date().toISOString();
+      saveState();
+      renderProjects();
+      openProjectDetail(editingProjectId);
+    }
+  }
 });
 $$('.sub-nav-item').forEach(button => button.addEventListener('click', () => switchOptionsSubview(button.dataset.subview)));
 ['#searchInput', '#sectorFilter', '#countryFilter', '#currencyFilter', '#statusFilter'].forEach(selector => {
@@ -1662,9 +2394,11 @@ $$('.sub-nav-item').forEach(button => button.addEventListener('click', () => swi
 });
 function applyPlanFormValues() {
   ensurePlanState();
+  const targetType = ['fi', 'networth', 'dividends', 'monthlyIncome'].includes($('#planTargetType')?.value) ? $('#planTargetType').value : state.plan.targetType;
+  const enteredValue = parseLocaleNumber($('#planTargetValue')?.value);
   state.plan = {
-    targetType: ['fi', 'networth', 'dividends'].includes($('#planTargetType')?.value) ? $('#planTargetType').value : state.plan.targetType,
-    targetValue: parseLocaleNumber($('#planTargetValue')?.value),
+    targetType,
+    targetValue: enteredValue === null ? null : (targetType === 'monthlyIncome' ? enteredValue * 12 : enteredValue),
     monthlyContribution: parseLocaleNumber($('#planMonthlyContribution')?.value),
     monthlyExpense: parseLocaleNumber($('#planMonthlyExpense')?.value),
     horizonYears: toNum($('#planHorizonYears')?.value, state.plan.horizonYears) || state.plan.horizonYears
@@ -1677,6 +2411,11 @@ function applyPlanFormValues() {
   $(selector)?.addEventListener('change', applyPlanFormValues);
 });
 $('#planSimulateBtn')?.addEventListener('click', applyPlanFormValues);
+$('#macroScenarioSelect')?.addEventListener('change', renderMacroScenario);
+$('#macroToggleAssumptionsBtn')?.addEventListener('click', () => { const node = $('#macroAssumptions'); node.hidden = !node.hidden; });
+$('#openCapitalAllocatorBtn')?.addEventListener('click', () => { capitalAllocatorProposal = null; $('#capitalAllocatorAmount').value = ''; renderCapitalAllocatorResult(); $('#capitalAllocatorDialog').open = true; });
+$('#capitalAllocatorCloseBtn')?.addEventListener('click', () => { $('#capitalAllocatorDialog').open = false; });
+$('#capitalAllocatorRunBtn')?.addEventListener('click', runCapitalAllocator);
 document.addEventListener('click', event => {
   const sortButton = event.target.closest('[data-sort-table]');
   if (sortButton) { toggleTableSort(sortButton.dataset.sortTable, sortButton.dataset.sortKey); return; }
@@ -1751,7 +2490,7 @@ const DEMO_TRANSACTIONS = [
   { id: 'tx-demo-10', datetime: '2026-07-19T10:00:00.000Z', type: 'SELL', isin: 'ES0130960018', symbol: 'ENG', name: 'Enagas SA', quantity: 60, price: 12.9, amount: 774, currency: 'EUR', fees: 2, taxes: 0, portfolio: 'Demo' }
 ];
 function defaultTransaction() {
-  return { id: `tx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, datetime: new Date().toISOString(), date: new Date().toISOString().slice(0, 10), month: new Date().toISOString().slice(0, 7), type: 'BUY', isin: '', symbol: '', name: '', quantity: null, price: null, amount: null, currency: 'EUR', fees: 0, taxes: 0, costs: 0, portfolio: '', totalCash: null, importMeta: null, raw: null, dedupeKey: '' };
+  return { id: `tx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, datetime: new Date().toISOString(), date: new Date().toISOString().slice(0, 10), month: new Date().toISOString().slice(0, 7), type: 'BUY', isin: '', symbol: '', name: '', quantity: null, price: null, amount: null, currency: 'EUR', fees: 0, taxes: 0, costs: 0, portfolio: '', accountId: '', totalCash: null, importMeta: null, raw: null, dedupeKey: '' };
 }
 function migrateTransaction(entry) {
   if (!entry || typeof entry !== 'object') return null;
@@ -1762,7 +2501,7 @@ function migrateTransaction(entry) {
   const taxes = toNum(entry.taxes, 0) || 0;
   const type = cleanText(entry.type).toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
   const dedupeKey = cleanText(entry.dedupeKey) || cleanText(entry.id) || `${datetime}|${normalizeIsin(entry.isin)}|${type}|${quantity ?? ''}|${amount ?? ''}`;
-  return { ...defaultTransaction(), ...entry, id: cleanText(entry.id) || dedupeKey, datetime, date: String(datetime).slice(0, 10), month: String(datetime).slice(0, 7), type, isin: normalizeIsin(entry.isin), symbol: cleanText(entry.symbol).toUpperCase(), name: cleanText(entry.name || entry.symbol || 'Operación sin nombre'), quantity, price: toNum(entry.price, null), amount, currency: normalizeCurrency(entry.currency), fees, taxes, costs: fees + taxes, portfolio: cleanText(entry.portfolio), totalCash: toNum(entry.totalCash, amount === null ? null : (type === 'BUY' ? amount + fees + taxes : amount - fees - taxes)), importMeta: entry.importMeta && typeof entry.importMeta === 'object' ? entry.importMeta : null, raw: entry.raw && typeof entry.raw === 'object' ? entry.raw : null, dedupeKey };
+  return { ...defaultTransaction(), ...entry, id: cleanText(entry.id) || dedupeKey, datetime, date: String(datetime).slice(0, 10), month: String(datetime).slice(0, 7), type, isin: normalizeIsin(entry.isin), symbol: cleanText(entry.symbol).toUpperCase(), name: cleanText(entry.name || entry.symbol || 'Operación sin nombre'), quantity, price: toNum(entry.price, null), amount, currency: normalizeCurrency(entry.currency), fees, taxes, costs: fees + taxes, portfolio: cleanText(entry.portfolio), accountId: cleanText(entry.accountId) || UNASSIGNED_ACCOUNT_ID, totalCash: toNum(entry.totalCash, amount === null ? null : (type === 'BUY' ? amount + fees + taxes : amount - fees - taxes)), importMeta: entry.importMeta && typeof entry.importMeta === 'object' ? entry.importMeta : null, raw: entry.raw && typeof entry.raw === 'object' ? entry.raw : null, dedupeKey };
 }
 function defaultOptionPosition() {
   const now = new Date().toISOString();
@@ -1783,7 +2522,7 @@ function defaultOptionPosition() {
     linkedPositionId: '', rollFromId: '', rolledToId: '',
     closedAt: '', closePremiumPerShare: null, closeFees: 0, closeReason: '', realizedResult: null,
     lastScore: null, lastScoreBreakdown: null,
-    notes: '', ownership: defaultOwnership(),
+    notes: '', ownership: defaultOwnership(), accountId: UNASSIGNED_ACCOUNT_ID,
     createdAt: now, updatedAt: now
   };
 }
@@ -1816,6 +2555,7 @@ function migrateOptionPosition(option) {
     closedAt: normalizeDate(option.closedAt), closePremiumPerShare: toNum(option.closePremiumPerShare, null), closeFees: toNum(option.closeFees, 0) || 0, closeReason: cleanText(option.closeReason), realizedResult: toNum(option.realizedResult, null),
     lastScore: toNum(option.lastScore, null), lastScoreBreakdown: Array.isArray(option.lastScoreBreakdown) ? option.lastScoreBreakdown : null,
     notes: cleanText(option.notes), ownership: migrateOwnership(option.ownership),
+    accountId: cleanText(option.accountId) || UNASSIGNED_ACCOUNT_ID,
     createdAt: option.createdAt || base.createdAt, updatedAt: option.updatedAt || base.updatedAt
   };
 }
@@ -2564,6 +3304,8 @@ function render() {
   renderFilters();
   renderAssets();
   renderLiabilities();
+  renderAccounts();
+  renderRentas();
   renderSettings();
   renderUndoState();
   renderBackupStatus();
@@ -2628,7 +3370,7 @@ function recommendationStatusLabel(value) { return ADVISORY_STATUS_LABELS[cleanT
 function reviewPhaseLabel(value) { return REVIEW_PHASE_LABELS[cleanText(value).toLowerCase()] || 'Revisión'; }
 function defaultAdvisorState(settings = DEFAULT_SETTINGS) { const monthlyExpense = toNum(settings?.monthlyExpense, null); const monthlyContribution = toNum(settings?.monthlyContribution, null); return { minimumLiquidityTarget: monthlyExpense ? monthlyExpense * 6 : 15000, upcomingDebt: 0, upcomingDebtMonths: 12, savingsCapacity: monthlyContribution ?? 1000, emergencyFundTarget: monthlyExpense ? monthlyExpense * 6 : 12000 }; }
 function defaultPlanState() { return { targetType: 'fi', targetValue: null, monthlyContribution: null, monthlyExpense: null, horizonYears: 15 }; }
-function migratePlanState(raw) { const next = defaultPlanState(); if (!raw || typeof raw !== 'object') return next; return { targetType: ['fi', 'networth', 'dividends'].includes(raw.targetType) ? raw.targetType : next.targetType, targetValue: toNum(raw.targetValue, null), monthlyContribution: toNum(raw.monthlyContribution, null), monthlyExpense: toNum(raw.monthlyExpense, null), horizonYears: toNum(raw.horizonYears, next.horizonYears) || next.horizonYears }; }
+function migratePlanState(raw) { const next = defaultPlanState(); if (!raw || typeof raw !== 'object') return next; return { targetType: ['fi', 'networth', 'dividends', 'monthlyIncome'].includes(raw.targetType) ? raw.targetType : next.targetType, targetValue: toNum(raw.targetValue, null), monthlyContribution: toNum(raw.monthlyContribution, null), monthlyExpense: toNum(raw.monthlyExpense, null), horizonYears: toNum(raw.horizonYears, next.horizonYears) || next.horizonYears }; }
 function defaultDecisionReview() { return { id: `decision-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, recommendationId: '', title: '', category: '', phase: '3m', phaseLabel: 'Revisión 3 meses', actionLabel: '', status: 'pending', statusLabel: 'Pendiente', reason: '', expectedOutcome: '', actualOutcome: '', lesson: '', createdAt: new Date().toISOString(), decidedAt: '', reviewDate: '', reviewedAt: '' }; }
 function migrateRecommendation(entry) { if (!entry || typeof entry !== 'object') return null; const urgency = cleanText(entry.urgency) || 'Media'; const impact = cleanText(entry.impact) || 'Medio'; const risk = cleanText(entry.risk) || 'Medio'; const status = cleanText(entry.status).toLowerCase() || 'pending'; return { ...entry, id: cleanText(entry.id) || `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, title: cleanText(entry.title) || 'Recomendación', category: cleanText(entry.category) || 'General', kind: cleanText(entry.kind).toLowerCase() || 'recommendation', action: cleanText(entry.action), explanation: cleanText(entry.explanation), justification: cleanText(entry.justification), impact, risk, urgency, reviewDate: normalizeDate(entry.reviewDate) || new Date().toISOString().slice(0, 10), status, statusLabel: recommendationStatusLabel(status), urgencyRank: urgencyRank(urgency), impactRank: impactRank(impact), riskRank: riskRank(risk), createdAt: entry.createdAt || new Date().toISOString(), updatedAt: entry.updatedAt || new Date().toISOString(), decidedAt: entry.decidedAt || null, reason: cleanText(entry.reason) }; }
 function migrateDecisionReview(entry) { if (!entry || typeof entry !== 'object') return null; const phase = cleanText(entry.phase).toLowerCase() || '3m'; const status = cleanText(entry.status).toLowerCase() || 'pending'; return { ...defaultDecisionReview(), ...entry, id: cleanText(entry.id) || `decision-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, recommendationId: cleanText(entry.recommendationId), title: cleanText(entry.title) || 'Decisión', category: cleanText(entry.category), phase, phaseLabel: reviewPhaseLabel(phase), actionLabel: cleanText(entry.actionLabel) || 'Decisión registrada', status, statusLabel: cleanText(entry.statusLabel) || recommendationStatusLabel(status), reason: cleanText(entry.reason), expectedOutcome: cleanText(entry.expectedOutcome), actualOutcome: cleanText(entry.actualOutcome), lesson: cleanText(entry.lesson), createdAt: entry.createdAt || new Date().toISOString(), decidedAt: entry.decidedAt || '', reviewDate: normalizeDate(entry.reviewDate) || '', reviewedAt: entry.reviewedAt || '' }; }
@@ -2653,6 +3395,32 @@ function migrateOwnership(raw) {
 function ownerName(ownerId) {
   if (ownerId === 'all') return 'Consolidado';
   return (state.ownerNames && state.ownerNames[ownerId]) || DEFAULT_OWNER_NAMES[ownerId] || ownerId;
+}
+function migrateStrategicTarget(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const hasAny = raw.targetWeight !== undefined || raw.targetAmount !== undefined || raw.targetContribution !== undefined || raw.horizon !== undefined || cleanText(raw.thesis);
+  if (!hasAny) return null;
+  return {
+    targetWeight: normalizePercentLike(raw.targetWeight, null),
+    targetAmount: toNum(raw.targetAmount, null),
+    targetContribution: toNum(raw.targetContribution, null),
+    horizon: cleanText(raw.horizon),
+    thesis: cleanText(raw.thesis)
+  };
+}
+function findAccount(accountId) {
+  if (!accountId || accountId === UNASSIGNED_ACCOUNT_ID) return null;
+  return state.accounts.find(account => account.id === accountId) || null;
+}
+function accountName(accountId) {
+  if (!accountId || accountId === UNASSIGNED_ACCOUNT_ID) return 'Sin asignar';
+  const account = findAccount(accountId);
+  return account ? account.name : 'Sin asignar';
+}
+function accountFilteredList(list, accountId) {
+  if (!Array.isArray(list)) return [];
+  if (!accountId || accountId === 'all') return list;
+  return list.filter(record => (record.accountId || UNASSIGNED_ACCOUNT_ID) === accountId);
 }
 function ownerShareOf(record, ownerId) {
   if (ownerId === 'all') return 1;
@@ -2704,13 +3472,73 @@ function portfolioEstimateContribution(ownerId = state.viewOwnerId) {
     return sum;
   }, { value: 0, cost: 0, dividends: 0, owners: [] });
 }
-function defaultState() { return { schemaVersion: SCHEMA_VERSION, portfolio: [], transactions: [], options: [], recommendations: [], decisionReviews: [], advisor: { ...defaultAdvisorState(DEFAULT_SETTINGS) }, plan: defaultPlanState(), history: [], backups: [], assets: [], liabilities: [], reportHistory: [], settings: { ...DEFAULT_SETTINGS }, tableSorts: defaultTableSorts(), ownerNames: defaultOwnerNames(), viewOwnerId: 'all', portfolioEstimates: {}, lastImport: null, lastTransactionsImport: null, lastBackupAt: null, lastImportUndo: null, theme: 'light' }; }
-function migrateState(raw) { const base = defaultState(); if (!raw || typeof raw !== 'object') return base; const settings = migrateSettings(raw.settings); return { ...base, ...raw, schemaVersion: SCHEMA_VERSION, portfolio: Array.isArray(raw.portfolio) ? raw.portfolio.map(migratePosition).filter(Boolean) : [], transactions: Array.isArray(raw.transactions) ? raw.transactions.map(migrateTransaction).filter(Boolean) : [], options: Array.isArray(raw.options) ? raw.options.map(migrateOptionPosition).filter(Boolean) : [], recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.map(migrateRecommendation).filter(Boolean) : [], decisionReviews: Array.isArray(raw.decisionReviews) ? raw.decisionReviews.map(migrateDecisionReview).filter(Boolean) : [], advisor: { ...defaultAdvisorState(settings), ...(raw.advisor && typeof raw.advisor === 'object' ? raw.advisor : {}) }, plan: migratePlanState(raw.plan), history: Array.isArray(raw.history) ? raw.history.map(migrateSnapshot).filter(Boolean) : [], backups: Array.isArray(raw.backups) ? raw.backups.map(migrateBackup).filter(Boolean).slice(0, 10) : [], assets: Array.isArray(raw.assets) ? raw.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(raw.liabilities) ? raw.liabilities.map(migrateLiability).filter(Boolean) : [], reportHistory: Array.isArray(raw.reportHistory) ? raw.reportHistory.map(migrateReportEntry).filter(Boolean).slice(0, 24) : [], settings, tableSorts: migrateTableSorts(raw.tableSorts), ownerNames: migrateOwnerNames(raw.ownerNames), viewOwnerId: OWNER_IDS.includes(raw.viewOwnerId) || raw.viewOwnerId === 'all' ? raw.viewOwnerId : 'all', portfolioEstimates: migratePortfolioEstimates(raw.portfolioEstimates), lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null, lastTransactionsImport: raw.lastTransactionsImport || null, theme: raw.theme === 'dark' ? 'dark' : 'light' }; }
+function autoMatchTransactionAccounts(transactions, accounts) {
+  if (!accounts.length) return transactions;
+  return transactions.map(tx => {
+    if (tx.accountId !== UNASSIGNED_ACCOUNT_ID) return tx;
+    const label = cleanText(tx.portfolio).toLowerCase();
+    if (!label) return tx;
+    const match = accounts.find(account => cleanText(account.name).toLowerCase() === label);
+    return match ? { ...tx, accountId: match.id } : tx;
+  });
+}
+function defaultState() { return { schemaVersion: SCHEMA_VERSION, portfolio: [], transactions: [], options: [], recommendations: [], decisionReviews: [], advisor: { ...defaultAdvisorState(DEFAULT_SETTINGS) }, plan: defaultPlanState(), history: [], backups: [], assets: [], liabilities: [], accounts: [], projects: [], reportHistory: [], settings: { ...DEFAULT_SETTINGS }, tableSorts: defaultTableSorts(), ownerNames: defaultOwnerNames(), viewOwnerId: 'all', portfolioEstimates: {}, lastImport: null, lastTransactionsImport: null, lastBackupAt: null, lastImportUndo: null, theme: 'light' }; }
+function migrateState(raw) {
+  const base = defaultState();
+  if (!raw || typeof raw !== 'object') return base;
+  const settings = migrateSettings(raw.settings);
+  const accounts = Array.isArray(raw.accounts) ? raw.accounts.map(migrateAccount).filter(Boolean) : [];
+  const transactions = autoMatchTransactionAccounts(Array.isArray(raw.transactions) ? raw.transactions.map(migrateTransaction).filter(Boolean) : [], accounts);
+  return { ...base, ...raw, schemaVersion: SCHEMA_VERSION, portfolio: Array.isArray(raw.portfolio) ? raw.portfolio.map(migratePosition).filter(Boolean) : [], transactions, options: Array.isArray(raw.options) ? raw.options.map(migrateOptionPosition).filter(Boolean) : [], recommendations: Array.isArray(raw.recommendations) ? raw.recommendations.map(migrateRecommendation).filter(Boolean) : [], decisionReviews: Array.isArray(raw.decisionReviews) ? raw.decisionReviews.map(migrateDecisionReview).filter(Boolean) : [], advisor: { ...defaultAdvisorState(settings), ...(raw.advisor && typeof raw.advisor === 'object' ? raw.advisor : {}) }, plan: migratePlanState(raw.plan), history: Array.isArray(raw.history) ? raw.history.map(migrateSnapshot).filter(Boolean) : [], backups: Array.isArray(raw.backups) ? raw.backups.map(migrateBackup).filter(Boolean).slice(0, 10) : [], assets: Array.isArray(raw.assets) ? raw.assets.map(migrateAsset).filter(Boolean) : [], liabilities: Array.isArray(raw.liabilities) ? raw.liabilities.map(migrateLiability).filter(Boolean) : [], accounts, projects: Array.isArray(raw.projects) ? raw.projects.map(migrateProject).filter(Boolean) : [], reportHistory: Array.isArray(raw.reportHistory) ? raw.reportHistory.map(migrateReportEntry).filter(Boolean).slice(0, 24) : [], settings, tableSorts: migrateTableSorts(raw.tableSorts), ownerNames: migrateOwnerNames(raw.ownerNames), viewOwnerId: OWNER_IDS.includes(raw.viewOwnerId) || raw.viewOwnerId === 'all' ? raw.viewOwnerId : 'all', portfolioEstimates: migratePortfolioEstimates(raw.portfolioEstimates), lastImportUndo: raw.lastImportUndo ? migrateBackup(raw.lastImportUndo) : null, lastTransactionsImport: raw.lastTransactionsImport || null, theme: raw.theme === 'dark' ? 'dark' : 'light' };
+}
+// Deliberately excludes accounts/projects: this snapshot only backs the pre-CSV-import undo,
+// which never touches accounts/projects, so they don't need to be rolled back with it.
 function cloneSnapshot() { return JSON.parse(JSON.stringify({ portfolio: state.portfolio, transactions: state.transactions, options: state.options, recommendations: state.recommendations, decisionReviews: state.decisionReviews, advisor: state.advisor, history: state.history, assets: state.assets, liabilities: state.liabilities, reportHistory: state.reportHistory, settings: state.settings, lastImport: state.lastImport, lastTransactionsImport: state.lastTransactionsImport, lastBackupAt: state.lastBackupAt })); }
 function decisionReviewsRows() { return sortRows((state.decisionReviews || []).map(migrateDecisionReview).filter(Boolean), 'decisionReviews'); }
 function dueReviewCount() { const today = new Date().toISOString().slice(0, 10); return decisionReviewsRows().filter(item => item.reviewDate && item.reviewDate <= today && ['pending', 'reviewing'].includes(item.status)).length; }
 function buildRecommendations() { const { signals, liquidityAvailable, requiredLiquidity, debtRatio, options, dividendTrend } = advisorSignals(); const topPositions = sortedPortfolio().slice(0, 5); const generated = []; if (liquidityAvailable < requiredLiquidity) generated.push({ id: 'liq-buffer', kind: 'alert', title: 'Reforzar la reserva de liquidez antes de nuevas compras', category: 'Liquidez', action: 'Reducir temporalmente la inversión y reservar caja hasta recuperar el umbral prudente.', urgency: 'Alta', explanation: 'La liquidez disponible tras descontar garantías queda por debajo del objetivo dinámico.', justification: `${eur.format(liquidityAvailable)} disponibles frente a un objetivo de ${eur.format(requiredLiquidity)}.`, impact: 'Alto', risk: 'Alto', horizon: '1-3 meses', reviewDate: new Date(Date.now() + 30 * 86400000).toISOString() }); if (state.advisor.upcomingDebt > 0 && state.advisor.upcomingDebtMonths <= 12) generated.push({ id: 'mortgage-priority', kind: 'estimate', title: 'Priorizar liquidez y capacidad de ahorro antes de formalizar la hipoteca', category: 'Deuda futura', action: 'Fijar un objetivo de caja previo a la firma y revisar aportaciones mensuales hasta alcanzarlo.', urgency: state.advisor.upcomingDebtMonths <= 6 ? 'Alta' : 'Media', explanation: 'La nueva deuda futura cambia el nivel prudente de caja y la tolerancia al riesgo.', justification: `Hipoteca o deuda prevista de ${eur.format(state.advisor.upcomingDebt)} en ${state.advisor.upcomingDebtMonths} meses.`, impact: 'Alto', risk: 'Alto', horizon: 'Hasta formalización', reviewDate: new Date(Date.now() + 45 * 86400000).toISOString() }); if (signals.find(item => item.id === 'company')?.tone === 'risk') generated.push({ id: 'top-position-freeze', kind: 'alert', title: 'Evitar ampliar las mayores posiciones hasta rebajar la concentración', category: 'Concentración', action: 'Congelar compras en las posiciones principales y dirigir nuevas entradas a zonas menos representadas.', urgency: 'Alta', explanation: 'La posición principal ya pesa demasiado dentro de la cartera.', justification: topPositions[0] ? `${topPositions[0].name} pesa ${formatPercent(topPositions[0].allocation || 0)}.` : 'Sin posición principal disponible.', impact: 'Alto', risk: 'Alto', horizon: '3 meses', reviewDate: new Date(Date.now() + 90 * 86400000).toISOString() }); if (signals.find(item => item.id === 'country')?.tone !== 'good') generated.push({ id: 'international-balance', kind: 'recommendation', title: 'Dirigir nuevas aportaciones a países o sectores infraponderados', category: 'Asignación', action: 'Priorizar las próximas compras fuera del sesgo geográfico dominante.', urgency: 'Media', explanation: 'La cartera puede diversificarse mejor sin necesidad de vender posiciones existentes.', justification: `La mayor exposición geográfica sigue concentrada en ${signals.find(item => item.id === 'country')?.name || 'una zona dominante'}.`, impact: 'Medio', risk: 'Medio', horizon: '3-6 meses', reviewDate: new Date(Date.now() + 120 * 86400000).toISOString() }); if (options.totalCollateral > 0) generated.push({ id: 'options-cash-check', kind: 'alert', title: 'Revisar si todas las puts abiertas serían asumibles si se asignaran hoy', category: 'Opciones', action: 'Simular asignación simultánea y reservar caja real para no depender de ventas forzadas.', urgency: options.expiringSoon.length ? 'Alta' : 'Media', explanation: 'Las opciones abiertas consumen liquidez real y pueden aumentar la concentración de forma brusca.', justification: `${eur.format(options.totalCollateral)} comprometidos y ${options.expiringSoon.length} vencimientos próximos.`, impact: 'Alto', risk: 'Alto', horizon: 'Inmediato', reviewDate: new Date(Date.now() + 21 * 86400000).toISOString() }); if (dividendTrend.growth12m !== null && dividendTrend.growth12m <= 0) generated.push({ id: 'dividend-review', kind: 'estimate', title: 'Revisar si el crecimiento del dividendo se ha estancado frente al último año', category: 'Dividendos', action: 'Analizar si el frenazo viene de recortes, divisa, rotación o exceso de concentración en pagadores maduros.', urgency: 'Media', explanation: 'La renta recurrente no está mejorando al ritmo esperado.', justification: `Crecimiento interanual estimado: ${formatPercent(dividendTrend.growth12m)}.`, impact: 'Medio', risk: 'Medio', horizon: '1-2 meses', reviewDate: new Date(Date.now() + 60 * 86400000).toISOString() }); if (debtRatio > 0.5) generated.push({ id: 'leverage-discipline', kind: 'alert', title: 'Reducir el ritmo de riesgo hasta estabilizar la deuda total', category: 'Riesgo financiero', action: 'Aplazar decisiones de riesgo incremental hasta aclarar el mapa de deuda y caja futura.', urgency: 'Alta', explanation: 'La deuda total prevista pesa demasiado sobre el patrimonio consolidado.', justification: `Ratio estimado de deuda ampliada: ${num.format(debtRatio * 100)} %.`, impact: 'Alto', risk: 'Alto', horizon: '6-12 meses', reviewDate: new Date(Date.now() + 120 * 86400000).toISOString() }); if (dueReviewCount() > 0) generated.push({ id: 'review-pending', kind: 'fact', title: 'Revisar decisiones pasadas ya vencidas', category: 'Aprendizaje', action: 'Cerrar las revisiones pendientes para saber que decisiones mejoraron realmente tu situación.', urgency: 'Media', explanation: 'Hay decisiones con fecha de revisión ya alcanzada.', justification: `${dueReviewCount()} revisiones ya deberían haberse evaluado.`, impact: 'Medio', risk: 'Medio', horizon: 'Este mes', reviewDate: new Date().toISOString() }); const existingById = new Map((state.recommendations || []).map(item => [item.id, item])); const ranked = [...generated].sort((a, b) => (urgencyRank(a.urgency) - urgencyRank(b.urgency)) || ((RECOMMENDATION_PRIORITY_WEIGHTS[a.id] || 99) - (RECOMMENDATION_PRIORITY_WEIGHTS[b.id] || 99))); return ranked.slice(0, 6).map(item => { const existing = existingById.get(item.id); return migrateRecommendation({ ...item, status: existing?.status || 'pending', reason: existing?.reason || '', createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), decidedAt: existing?.decidedAt || null }); }); }
-function renderAdvisorCenter() { ensureAdvisoryState(); const recommendationRows = $('#recommendationRows'); const decisionRows = $('#decisionRows'); const diagnosis = $('#advisorDiagnosis'); const priorities = $('#advisorPriorities'); const signalsNode = $('#advisorSignals'); const optionsSummaryNode = $('#advisorOptionsSummary'); const optionsAlertsNode = $('#advisorOptionsAlerts'); if (!diagnosis) return; $('#advisorMinLiquidity').value = formatInputNumber(state.advisor.minimumLiquidityTarget); $('#advisorUpcomingDebt').value = formatInputNumber(state.advisor.upcomingDebt); $('#advisorUpcomingDebtMonths').value = state.advisor.upcomingDebtMonths ?? ''; $('#advisorSavingsCapacity').value = formatInputNumber(state.advisor.savingsCapacity); $('#advisorEmergencyFund').value = formatInputNumber(state.advisor.emergencyFundTarget); state.recommendations = buildRecommendations(); const sortedRecommendations = sortRows(state.recommendations, 'recommendations'); const { signals } = advisorSignals(); const options = optionsSummary(); diagnosis.className = 'summary-stack'; diagnosis.innerHTML = executiveDiagnosis(state.recommendations).map((line, index) => index === 0 ? `<strong>${escapeHtml(line)}</strong>` : `<small>${escapeHtml(line)}</small>`).join(''); priorities.className = state.recommendations.length ? 'scenario-list' : 'scenario-list empty-state'; priorities.innerHTML = state.recommendations.slice(0, 3).map(item => `<article class="priority-card"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.urgency)}</span><small>${escapeHtml(item.explanation)}</small><small>Acción: ${escapeHtml(item.action || 'Pendiente de concretar')}</small><small>Revisión: ${dateEs(String(item.reviewDate).slice(0, 10))}</small></article>`).join('') || 'Sin datos'; signalsNode.className = 'signal-list'; signalsNode.innerHTML = signals.map(signal => `<div class="signal-row signal-${signal.tone}"><strong>${escapeHtml(signal.title)}</strong><span>${escapeHtml(signal.name)}</span><small>${escapeHtml(signal.detail)}</small></div>`).join(''); optionsSummaryNode.className = 'summary-stack'; optionsSummaryNode.innerHTML = options.open.length ? [`<strong>${options.open.length} posiciones abiertas</strong>`, `<small>Garantías reservadas: ${eur.format(options.totalCollateral)}</small>`, `<small>Primas netas acumuladas: ${eur.format(options.totalPremium)}</small>`, `<small>Exposición potencial por asignación: ${eur.format(options.assignedPotential)}</small>`].join('') : '<small>No hay opciones abiertas registradas.</small>'; optionsAlertsNode.className = 'signal-list'; const optionAlertCards = []; if (options.expiringSoon.length) optionAlertCards.push({ tone: 'warn', title: 'Vencimientos próximos', detail: `${options.expiringSoon.length} posiciones vencen en los próximos 45 días.` }); if (options.totalCollateral > fullMetrics().liquidity * 0.4 && fullMetrics().liquidity > 0) optionAlertCards.push({ tone: 'risk', title: 'Liquidez comprometida', detail: 'Las garantías absorben una parte demasiado alta de la caja disponible.' }); if (!optionAlertCards.length) optionAlertCards.push({ tone: 'good', title: 'Opciones bajo control', detail: 'No hay alertas críticas en las posiciones registradas.' }); optionsAlertsNode.innerHTML = optionAlertCards.map(item => `<div class="signal-row signal-${item.tone}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div>`).join(''); recommendationRows.innerHTML = sortedRecommendations.length ? sortedRecommendations.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.category)} | ${escapeHtml(advisoryKindLabel(item.kind))}</small><br><small>${escapeHtml(item.action || item.explanation)}</small></td><td>${escapeHtml(item.urgency)}</td><td>${escapeHtml(item.impact)}</td><td>${escapeHtml(item.risk)}</td><td>${dateEs(String(item.reviewDate).slice(0, 10))}</td><td>${escapeHtml(item.statusLabel || recommendationStatusLabel(item.status))}</td><td><div class="recommendation-actions"><wa-button size="small" appearance="plain" data-rec-action="accept" data-rec-id="${item.id}">Aceptar</wa-button><wa-button size="small" appearance="plain" data-rec-action="execute" data-rec-id="${item.id}">Ejecutada</wa-button><wa-button size="small" appearance="plain" data-rec-action="postpone" data-rec-id="${item.id}">Posponer</wa-button><wa-button size="small" appearance="plain" data-rec-action="discard" data-rec-id="${item.id}">Descartar</wa-button></div></td></tr>`).join('') : '<tr><td colspan="7" class="empty-cell">Sin recomendaciones todavía.</td></tr>'; const reviews = decisionReviewsRows(); decisionRows.innerHTML = reviews.length ? reviews.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.phaseLabel)} | ${escapeHtml(item.actionLabel)}</small></td><td>${item.decidedAt ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.decidedAt)) : '-'}</td><td>${dateEs(String(item.reviewDate || '').slice(0, 10))}</td><td>${escapeHtml(item.statusLabel)}</td><td>${escapeHtml(item.lesson || item.reason || item.expectedOutcome || 'Sin aprendizaje registrado')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Aún no hay decisiones registradas.</td></tr>'; }
+function renderAdvisorCenter() { ensureAdvisoryState(); const recommendationRows = $('#recommendationRows'); const decisionRows = $('#decisionRows'); const diagnosis = $('#advisorDiagnosis'); const priorities = $('#advisorPriorities'); const signalsNode = $('#advisorSignals'); const optionsSummaryNode = $('#advisorOptionsSummary'); const optionsAlertsNode = $('#advisorOptionsAlerts'); if (!diagnosis) return; $('#advisorMinLiquidity').value = formatInputNumber(state.advisor.minimumLiquidityTarget); $('#advisorUpcomingDebt').value = formatInputNumber(state.advisor.upcomingDebt); $('#advisorUpcomingDebtMonths').value = state.advisor.upcomingDebtMonths ?? ''; $('#advisorSavingsCapacity').value = formatInputNumber(state.advisor.savingsCapacity); $('#advisorEmergencyFund').value = formatInputNumber(state.advisor.emergencyFundTarget); state.recommendations = buildRecommendations(); const sortedRecommendations = sortRows(state.recommendations, 'recommendations'); const { signals } = advisorSignals(); const options = optionsSummary(); diagnosis.className = 'summary-stack'; diagnosis.innerHTML = executiveDiagnosis(state.recommendations).map((line, index) => index === 0 ? `<strong>${escapeHtml(line)}</strong>` : `<small>${escapeHtml(line)}</small>`).join(''); priorities.className = state.recommendations.length ? 'scenario-list' : 'scenario-list empty-state'; priorities.innerHTML = state.recommendations.slice(0, 3).map(item => `<article class="priority-card"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.urgency)}</span><small>${escapeHtml(item.explanation)}</small><small>Acción: ${escapeHtml(item.action || 'Pendiente de concretar')}</small><small>Revisión: ${dateEs(String(item.reviewDate).slice(0, 10))}</small></article>`).join('') || 'Sin datos'; signalsNode.className = 'signal-list'; signalsNode.innerHTML = signals.slice(0, 5).map(signal => `<div class="signal-row signal-${signal.tone}"><strong>${escapeHtml(signal.title)}</strong><span>${escapeHtml(signal.name)}</span><small>${escapeHtml(signal.detail)}</small></div>`).join(''); optionsSummaryNode.className = 'summary-stack'; optionsSummaryNode.innerHTML = options.open.length ? [`<strong>${options.open.length} posiciones abiertas</strong>`, `<small>Garantías reservadas: ${eur.format(options.totalCollateral)}</small>`, `<small>Primas netas acumuladas: ${eur.format(options.totalPremium)}</small>`, `<small>Exposición potencial por asignación: ${eur.format(options.assignedPotential)}</small>`].join('') : '<small>No hay opciones abiertas registradas.</small>'; optionsAlertsNode.className = 'signal-list'; const optionAlertCards = []; if (options.expiringSoon.length) optionAlertCards.push({ tone: 'warn', title: 'Vencimientos próximos', detail: `${options.expiringSoon.length} posiciones vencen en los próximos 45 días.` }); if (options.totalCollateral > fullMetrics().liquidity * 0.4 && fullMetrics().liquidity > 0) optionAlertCards.push({ tone: 'risk', title: 'Liquidez comprometida', detail: 'Las garantías absorben una parte demasiado alta de la caja disponible.' }); if (!optionAlertCards.length) optionAlertCards.push({ tone: 'good', title: 'Opciones bajo control', detail: 'No hay alertas críticas en las posiciones registradas.' }); optionsAlertsNode.innerHTML = optionAlertCards.map(item => `<div class="signal-row signal-${item.tone}"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div>`).join(''); recommendationRows.innerHTML = sortedRecommendations.length ? sortedRecommendations.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.category)} | ${escapeHtml(advisoryKindLabel(item.kind))}</small><br><small>${escapeHtml(item.action || item.explanation)}</small></td><td>${escapeHtml(item.urgency)}</td><td>${escapeHtml(item.impact)}</td><td>${escapeHtml(item.risk)}</td><td>${dateEs(String(item.reviewDate).slice(0, 10))}</td><td>${escapeHtml(item.statusLabel || recommendationStatusLabel(item.status))}</td><td><div class="recommendation-actions"><wa-button size="small" appearance="plain" data-rec-action="accept" data-rec-id="${item.id}">Aceptar</wa-button><wa-button size="small" appearance="plain" data-rec-action="execute" data-rec-id="${item.id}">Ejecutada</wa-button><wa-button size="small" appearance="plain" data-rec-action="postpone" data-rec-id="${item.id}">Posponer</wa-button><wa-button size="small" appearance="plain" data-rec-action="discard" data-rec-id="${item.id}">Descartar</wa-button></div></td></tr>`).join('') : '<tr><td colspan="7" class="empty-cell">Sin recomendaciones todavía.</td></tr>'; const reviews = decisionReviewsRows(); decisionRows.innerHTML = reviews.length ? reviews.map(item => `<tr><td><strong>${escapeHtml(item.title)}</strong><br><small>${escapeHtml(item.phaseLabel)} | ${escapeHtml(item.actionLabel)}</small></td><td>${item.decidedAt ? new Intl.DateTimeFormat('es-ES', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.decidedAt)) : '-'}</td><td>${dateEs(String(item.reviewDate || '').slice(0, 10))}</td><td>${escapeHtml(item.statusLabel)}</td><td>${escapeHtml(item.lesson || item.reason || item.expectedOutcome || 'Sin aprendizaje registrado')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">Aún no hay decisiones registradas.</td></tr>'; renderAdvisorMonthlyIncome(); renderAdvisorCommitments(); renderAdvisorEvolutionChart(); }
+function renderAdvisorMonthlyIncome() {
+  const valueNode = $('#advisorMonthlyIncome');
+  if (!valueNode) return;
+  const summary = rentasSummary();
+  valueNode.textContent = eur.format(summary.monthlyNet);
+  $('#advisorMonthlyIncomeMeta').textContent = `Bruta: ${eur.format(summary.grossAnnual / 12)}/mes`;
+  const coverageNode = $('#advisorIncomeCoverage');
+  coverageNode.textContent = summary.coverage !== null ? formatPercent(summary.coverage) : '--';
+  $('#advisorIncomeCoverageMeta').textContent = summary.coverage !== null ? `Objetivo: ${eur.format(summary.targetMonthly)}/mes` : 'Configura un objetivo de renta mensual en Plan.';
+}
+function renderAdvisorCommitments() {
+  const node = $('#advisorCommitments');
+  if (!node) return;
+  const items = [];
+  state.accounts.filter(a => a.quarterlyRule.active).forEach(account => {
+    const status = quarterlyRuleStatus(account);
+    if (status && !status.qualifies) items.push({ date: null, sortKey: status.daysRemaining, tone: status.tone, title: `${account.name}: regla trimestral pendiente`, detail: status.detail });
+  });
+  state.projects.forEach(project => {
+    const next = nextCommitment(project);
+    if (next) items.push({ date: next.dueDate, sortKey: next.dueDate || '9999', tone: 'warn', title: `${project.name}: ${eur.format(next.amount)}`, detail: next.dueDate ? `Vence el ${dateEs(next.dueDate)}` : 'Sin fecha' });
+  });
+  optionsSummary().expiringSoon.forEach(option => {
+    items.push({ date: option.expiration, sortKey: option.expiration || '9999', tone: 'warn', title: `${option.underlying || option.ticker}: vencimiento de opción`, detail: `Vence el ${dateEs(option.expiration)}` });
+  });
+  items.sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)));
+  node.className = items.length ? 'signal-list' : 'signal-list empty-state';
+  node.innerHTML = items.length ? items.slice(0, 8).map(item => `<div class="signal-row signal-${item.tone}"><strong>${escapeHtml(item.title)}</strong><span></span><small>${escapeHtml(item.detail)}</small></div>`).join('') : 'Sin compromisos próximos.';
+}
+function renderAdvisorEvolutionChart() {
+  const chart = $('#advisorEvolutionChart');
+  if (!chart) return;
+  const chronological = [...state.history].sort((a, b) => new Date(a.date) - new Date(b.date));
+  if (!chronological.length) { chart.className = 'history-chart empty-state'; chart.textContent = 'Sin datos'; return; }
+  const labels = chronological.map(snapshot => formatMonthTick(snapshot.date));
+  chart.className = 'history-chart';
+  chart.innerHTML = buildLineChart([
+    { label: 'Patrimonio neto', color: 'var(--chart-networth)', values: chronological.map(snapshot => snapshot.netWorth || 0) },
+    { label: 'Dividendos', color: 'var(--chart-portfolio)', values: chronological.map(snapshot => snapshot.dividends || 0), dashed: true }
+  ], labels, { ariaLabel: 'Evolución de patrimonio y renta' });
+}
 function optionStressScenario() {
   const openPuts = visibleOptions().filter(option => option.status === 'open' && option.optionType === 'put' && option.side === 'sell');
   const metrics = fullMetrics();
