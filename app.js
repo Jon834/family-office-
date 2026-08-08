@@ -10,6 +10,7 @@ const OPTION_OBJECTIVES = ['buy_lower', 'income', 'protect', 'speculate_up', 'sp
 const OPTION_STATUS_LABELS = { proposal: 'Propuesta', open: 'Abierta', closed: 'Cerrada', expired: 'Vencida sin valor', assigned: 'Asignada', exercised: 'Ejercida', rolled: 'Rolada', cancelled: 'Cancelada' };
 const OWNER_IDS = ['owner-1', 'owner-2', 'owner-family'];
 const DEFAULT_OWNER_NAMES = { 'owner-1': 'Yo', 'owner-2': 'Mi pareja', 'owner-family': 'Familiar conjunto' };
+const ENTRY_OWNER_SELECT_IDS = ['assetOwner', 'liabilityOwner', 'accountOwner', 'projectOwner', 'anOwner'];
 const ACCOUNT_TYPES = ['broker', 'bank', 'fund_platform', 'pension', 'joint_account', 'child_portfolio', 'other'];
 const ACCOUNT_TYPE_LABELS = { broker: 'Bróker', bank: 'Banco', fund_platform: 'Plataforma de fondos', pension: 'Plan de pensiones', joint_account: 'Cuenta conjunta', child_portfolio: 'Cartera de hijos', other: 'Otra' };
 const ACCOUNT_PURPOSES = ['long_term_income', 'options', 'liquidity', 'emergency', 'children', 'retirement', 'project', 'mixed'];
@@ -1085,17 +1086,31 @@ function renderMacroScenario() {
 function reportHistoryRows() { return [...state.reportHistory].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); }
 function saveReportHistoryEntry(entry) { state.reportHistory = [entry, ...state.reportHistory].slice(0, 24); }
 function applyTheme() { document.body.classList.toggle('dark', state.theme === 'dark'); $('#themeBtn wa-icon')?.setAttribute('name', state.theme === 'dark' ? 'sun' : 'moon'); }
+function ownerPillHtml(record) {
+  const ownership = record?.ownership || defaultOwnership();
+  if (ownership.length === 1 && ownership[0].pct >= 0.999) {
+    const id = ownership[0].ownerId;
+    return `<span class="owner-pill owner-pill-${id}">${escapeHtml(ownerName(id))}</span>`;
+  }
+  return `<span class="owner-tag">${escapeHtml(ownerLabel(record))}</span>`;
+}
+function applyOwnerAccentClass(select, ownerId) {
+  if (!select) return;
+  select.classList.remove('owner-accent-owner-1', 'owner-accent-owner-2', 'owner-accent-owner-family');
+  if (OWNER_IDS.includes(ownerId)) select.classList.add(`owner-accent-${ownerId}`);
+}
 function applyOwnerView() {
   const select = $('#ownerViewSelect');
   if (!select) return;
   const labels = { all: 'Consolidado', 'owner-1': ownerName('owner-1'), 'owner-2': ownerName('owner-2'), 'owner-family': ownerName('owner-family') };
   $$('#ownerViewSelect wa-option').forEach(option => { const key = option.value; if (labels[key]) option.textContent = labels[key]; });
   select.value = state.viewOwnerId || 'all';
+  applyOwnerAccentClass(select, state.viewOwnerId);
 }
 function renderBars(selector, data) { const element = $(selector); if (!data.length) { element.className = 'bar-chart empty-state'; element.textContent = 'Sin datos'; return; } const max = data[0].value || 1; element.className = 'bar-chart'; element.innerHTML = data.map(item => `<div class="bar-row"><span title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(2, (item.value / max) * 100)}%"></div></div><span class="bar-value">${pct.format(item.weight)}</span></div>`).join(''); }
 function portfolioFilters() { return { query: ($('#searchInput')?.value || '').toLowerCase(), sector: $('#sectorFilter')?.value || '', country: $('#countryFilter')?.value || '', currency: $('#currencyFilter')?.value || '', status: $('#statusFilter')?.value || 'active' }; }
 function filteredPortfolio() { const { query, sector, country, currency, status } = portfolioFilters(); const rows = ownerFilteredList(state.portfolio).filter(position => { const haystack = `${position.name} ${position.symbol} ${position.isin}`.toLowerCase(); const positionStatus = normalizeStatus(position.status); const statusOk = status === 'all' ? true : positionStatus === status; return (!query || haystack.includes(query)) && (!sector || position.sector === sector) && (!country || position.country === country) && (!currency || position.currency === currency) && statusOk; }); return sortRows(rows, 'portfolio'); }
-function renderPortfolio() { const list = filteredPortfolio(); $('#portfolioRows').innerHTML = list.length ? list.map(position => `<tr><td class="company-cell"><strong>${escapeHtml(position.name)}</strong><small>${escapeHtml(position.symbol)} | ${escapeHtml(position.isin || 'Sin ISIN')}</small></td><td>${position.quantity === null ? '-' : num.format(position.quantity)}</td><td>${formatCurrency(position.averagePrice, position.currency)}</td><td>${formatCurrency(position.currentPrice, position.currency)}</td><td>${formatCurrency(position.marketValue, position.currency)}</td><td class="${(position.gain || 0) >= 0 ? 'positive' : 'negative'}">${formatCurrency(position.gain, position.currency)}<br><small>${formatPercent(position.gainPercent)}</small></td><td>${formatPercent(position.allocation)}</td><td>${formatCurrency(position.annualDividend, position.currency)}</td><td>${formatPercent(position.dividendYield)}</td><td>${formatPercent(position.yieldOnCost)}</td><td>${dateEs(position.payDate)}</td><td><wa-button size="small" appearance="plain" data-edit-position="${position.id}"><wa-icon name="pen-to-square"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="12" class="empty-cell">No hay resultados.</td></tr>'; renderCurrencyExposure(); }
+function renderPortfolio() { const list = filteredPortfolio(); $('#portfolioRows').innerHTML = list.length ? list.map(position => `<tr><td class="company-cell"><strong>${escapeHtml(position.name)}</strong><small>${escapeHtml(position.symbol)} | ${escapeHtml(position.isin || 'Sin ISIN')}</small></td><td data-label="Cantidad">${position.quantity === null ? '-' : num.format(position.quantity)}</td><td data-label="Precio medio">${formatCurrency(position.averagePrice, position.currency)}</td><td data-label="Precio">${formatCurrency(position.currentPrice, position.currency)}</td><td data-label="Valor">${formatCurrency(position.marketValue, position.currency)}</td><td data-label="Ganancia" class="${(position.gain || 0) >= 0 ? 'positive' : 'negative'}">${formatCurrency(position.gain, position.currency)}<br><small>${formatPercent(position.gainPercent)}</small></td><td data-label="Peso">${formatPercent(position.allocation)}</td><td data-label="Div. anual">${formatCurrency(position.annualDividend, position.currency)}</td><td data-label="Yield">${formatPercent(position.dividendYield)}</td><td data-label="YOC">${formatPercent(position.yieldOnCost)}</td><td data-label="Próximo pago">${dateEs(position.payDate)}</td><td class="row-actions"><wa-button size="small" appearance="plain" data-edit-position="${position.id}"><wa-icon name="pen-to-square"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="12" class="empty-cell">No hay resultados.</td></tr>'; renderCurrencyExposure(); }
 function renderCurrencyExposure() {
   const node = $('#currencyExposureChart');
   if (!node) return;
@@ -1329,8 +1344,8 @@ function renderHistory() {
     macroChips.innerHTML = macro.chips.map(chip => `<article class="macro-chip${chip.emphasis ? ' emphasis' : ''}"><strong>${escapeHtml(chip.title)}</strong><span>${escapeHtml(chip.value)}</span><small>${escapeHtml(chip.note)}</small></article>`).join('');
   }
 }
-function renderAssets() { const rows = sortRows(visibleAssets(), 'assets'); $('#assetRows').innerHTML = rows.length ? rows.map(asset => `<tr><td>${escapeHtml(asset.name)}<br><small class="owner-tag">${escapeHtml(ownerLabel(asset))}</small></td><td>${escapeHtml(asset.type)}</td><td>${eur.format(asset.value || 0)}</td><td>${escapeHtml(asset.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-asset="${asset.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay activos adicionales.</td></tr>'; }
-function renderLiabilities() { const rows = sortRows(visibleLiabilities(), 'liabilities'); $('#liabilityRows').innerHTML = rows.length ? rows.map(liability => `<tr><td>${escapeHtml(liability.name)}<br><small class="owner-tag">${escapeHtml(ownerLabel(liability))}</small></td><td>${escapeHtml(liability.type)}</td><td>${eur.format(liability.value || 0)}</td><td>${escapeHtml(liability.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-liability="${liability.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay deudas registradas.</td></tr>'; }
+function renderAssets() { const rows = sortRows(visibleAssets(), 'assets'); $('#assetRows').innerHTML = rows.length ? rows.map(asset => `<tr><td>${escapeHtml(asset.name)}<br>${ownerPillHtml(asset)}</td><td>${escapeHtml(asset.type)}</td><td>${eur.format(asset.value || 0)}</td><td>${escapeHtml(asset.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-asset="${asset.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay activos adicionales.</td></tr>'; }
+function renderLiabilities() { const rows = sortRows(visibleLiabilities(), 'liabilities'); $('#liabilityRows').innerHTML = rows.length ? rows.map(liability => `<tr><td>${escapeHtml(liability.name)}<br>${ownerPillHtml(liability)}</td><td>${escapeHtml(liability.type)}</td><td>${eur.format(liability.value || 0)}</td><td>${escapeHtml(liability.notes || '-')}</td><td><wa-button size="small" appearance="plain" data-delete-liability="${liability.id}"><wa-icon name="trash"></wa-icon></wa-button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-cell">No hay deudas registradas.</td></tr>'; }
 function renderSettings() { $('#monthlyExpenseInput').value = formatInputNumber(state.settings.monthlyExpense); $('#targetDividendInput').value = formatInputNumber(state.settings.targetAnnualDividends); $('#targetNetWorthInput').value = formatInputNumber(state.settings.targetNetWorth); $('#monthlyContributionInput').value = formatInputNumber(state.settings.monthlyContribution); if ($('#targetMonthlyIncomeInput')) $('#targetMonthlyIncomeInput').value = formatInputNumber(state.settings.targetMonthlyIncome); if ($('#ownerName1')) { $('#ownerName1').value = ownerName('owner-1'); $('#ownerName2').value = ownerName('owner-2'); $('#ownerNameFamily').value = ownerName('owner-family'); } renderPortfolioEstimateRows(); }
 function saveOwnerNames(event) {
   event.preventDefault();
@@ -1728,7 +1743,7 @@ function addAsset(event) {
   render();
   $('#assetForm').reset();
   $('#assetType').value = 'cash';
-  $('#assetOwner').value = 'owner-1';
+  $('#assetOwner').value = defaultOwnerForEntry();
   $('#assetSharedSplit').hidden = true;
   showNotice('Activo añadido.');
 }
@@ -1752,7 +1767,7 @@ function addLiability(event) {
   render();
   $('#liabilityForm').reset();
   $('#liabilityType').value = 'mortgage';
-  $('#liabilityOwner').value = 'owner-1';
+  $('#liabilityOwner').value = defaultOwnerForEntry();
   $('#liabilitySharedSplit').hidden = true;
   showNotice('Deuda añadida.');
 }
@@ -1783,7 +1798,7 @@ function renderAccounts() {
   grid.className = accounts.length ? 'account-grid' : 'account-grid empty-state';
   grid.innerHTML = accounts.length ? accounts.map(account => {
     const summary = accountSummary(account);
-    return `<article class="account-card" data-open-account="${account.id}"><strong>${escapeHtml(account.name)}</strong><span class="account-badge">${escapeHtml(ACCOUNT_TYPE_LABELS[account.type] || account.type)}</span><small>${escapeHtml(ownerName(account.ownerId))}</small><span>${eur.format(summary.value)}</span><small>Dividendos: ${eur.format(summary.dividends)} | ${summary.positionsCount} posiciones</small></article>`;
+    return `<article class="account-card" data-open-account="${account.id}"><strong>${escapeHtml(account.name)}</strong><span class="account-badge">${escapeHtml(ACCOUNT_TYPE_LABELS[account.type] || account.type)}</span><span class="owner-pill owner-pill-${account.ownerId}">${escapeHtml(ownerName(account.ownerId))}</span><span>${eur.format(summary.value)}</span><small>Dividendos: ${eur.format(summary.dividends)} | ${summary.positionsCount} posiciones</small></article>`;
   }).join('') : 'Sin cuentas todavía.';
   renderProjects();
 }
@@ -1804,7 +1819,7 @@ function addAccount(event) {
   saveState();
   render();
   $('#accountForm').reset();
-  $('#accountOwner').value = 'owner-1';
+  $('#accountOwner').value = defaultOwnerForEntry();
   $('#accountType').value = 'broker';
   $('#accountPurpose').value = 'mixed';
   $('#accountCurrency').value = 'EUR';
@@ -1893,7 +1908,7 @@ function renderProjects() {
   list.innerHTML = projects.length ? projects.map(project => {
     const totals = projectTotals(project);
     const next = nextCommitment(project);
-    return `<div class="scenario-card" data-open-project="${project.id}"><strong>${escapeHtml(project.name)}</strong><span>${project.deliveryDate ? dateEs(project.deliveryDate) : 'Sin fecha'}</span><small>${escapeHtml(ownerLabel(project))} · ${escapeHtml(PROJECT_TYPE_LABELS[project.type] || project.type)}</small><small>Pagado: ${eur.format(totals.paid)} | Pendiente: ${eur.format(totals.pending)}</small>${next ? `<small>Próximo compromiso: ${eur.format(next.amount)} · ${dateEs(next.dueDate)}</small>` : ''}</div>`;
+    return `<div class="scenario-card" data-open-project="${project.id}"><strong>${escapeHtml(project.name)}</strong><span>${project.deliveryDate ? dateEs(project.deliveryDate) : 'Sin fecha'}</span><small>${ownerPillHtml(project)} · ${escapeHtml(PROJECT_TYPE_LABELS[project.type] || project.type)}</small><small>Pagado: ${eur.format(totals.paid)} | Pendiente: ${eur.format(totals.pending)}</small>${next ? `<small>Próximo compromiso: ${eur.format(next.amount)} · ${dateEs(next.dueDate)}</small>` : ''}</div>`;
   }).join('') : 'Sin proyectos todavía.';
 }
 function addProject(event) {
@@ -1913,7 +1928,7 @@ function addProject(event) {
   saveState();
   render();
   $('#projectForm').reset();
-  $('#projectOwner').value = 'owner-1';
+  $('#projectOwner').value = defaultOwnerForEntry();
   $('#projectSharedSplit').hidden = true;
   showNotice('Proyecto añadido.');
 }
@@ -2421,6 +2436,10 @@ $('#ownerViewSelect')?.addEventListener('change', event => {
   state.viewOwnerId = value === 'all' || OWNER_IDS.includes(value) ? value : 'all';
   saveState();
   render();
+  applyDefaultOwnerToEntryForms();
+});
+ENTRY_OWNER_SELECT_IDS.forEach(id => {
+  $(`#${id}`)?.addEventListener('change', event => applyOwnerAccentClass(event.target, event.target.value));
 });
 ['#importBtn', '#portfolioImportBtn'].forEach(selector => $(selector)?.addEventListener('click', openImport));
 $('#chooseCsvBtn')?.addEventListener('click', () => $('#csvFile').click());
@@ -3680,6 +3699,20 @@ function ownerName(ownerId) {
   if (ownerId === 'all') return 'Consolidado';
   return (state.ownerNames && state.ownerNames[ownerId]) || DEFAULT_OWNER_NAMES[ownerId] || ownerId;
 }
+function defaultOwnerForEntry() {
+  return OWNER_IDS.includes(state.viewOwnerId) ? state.viewOwnerId : 'owner-1';
+}
+function applyDefaultOwnerToEntryForms() {
+  const target = defaultOwnerForEntry();
+  ENTRY_OWNER_SELECT_IDS.forEach(id => {
+    const select = $(`#${id}`);
+    if (!select) return;
+    const form = select.closest('form') || select.closest('.inline-form') || select;
+    if (form.contains(document.activeElement) && document.activeElement !== document.body) return;
+    select.value = target;
+    applyOwnerAccentClass(select, target);
+  });
+}
 function migrateStrategicTarget(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const hasAny = raw.targetWeight !== undefined || raw.targetAmount !== undefined || raw.targetContribution !== undefined || raw.horizon !== undefined || cleanText(raw.thesis);
@@ -4176,6 +4209,7 @@ async function markdown() { const portfolio = sortedPortfolio(activePortfolio())
 ensureAdvisoryState();
 saveState();
 render();
+applyDefaultOwnerToEntryForms();
 
 
 function loadGuidedDemo() {

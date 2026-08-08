@@ -15,6 +15,9 @@
   --success: #15803d;
   --danger: #b91c1c;
   --warning: #b45309;
+  --owner-1: #2563eb;
+  --owner-2: #9333ea;
+  --owner-family: #16a34a;
   --shadow: 0 18px 40px rgba(39, 39, 42, 0.08);
   --radius: 18px;
   --chart-portfolio: #d97706;
@@ -462,6 +465,45 @@ td {
   font-size: 0.72rem;
   margin-top: 2px;
 }
+
+.owner-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px 2px 7px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 650;
+  margin-top: 2px;
+  background: var(--surface-muted);
+  color: var(--slate-deep);
+}
+
+.owner-pill::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.owner-pill-owner-1 { color: var(--owner-1); }
+.owner-pill-owner-2 { color: var(--owner-2); }
+.owner-pill-owner-family { color: var(--owner-family); }
+
+body.dark .owner-pill {
+  background: #303036;
+  color: #fafaf9;
+}
+
+/* Color accent on owner selects: which propietario a form entry / the global view is for */
+wa-select.owner-accent-owner-1::part(combobox),
+#ownerViewSelect.owner-accent-owner-1::part(combobox) { border-bottom: 3px solid var(--owner-1); }
+wa-select.owner-accent-owner-2::part(combobox),
+#ownerViewSelect.owner-accent-owner-2::part(combobox) { border-bottom: 3px solid var(--owner-2); }
+wa-select.owner-accent-owner-family::part(combobox),
+#ownerViewSelect.owner-accent-owner-family::part(combobox) { border-bottom: 3px solid var(--owner-family); }
 
 .owner-select-wrap {
   display: flex;
@@ -1100,6 +1142,9 @@ body.dark {
   --muted: #b4b4bb;
   --border: #3f3f46;
   --shadow: none;
+  --owner-1: #60a5fa;
+  --owner-2: #c084fc;
+  --owner-family: #4ade80;
   background: radial-gradient(circle at top left, #4c2b08 0%, #242427 24%, #18181b 58%, #121214 100%);
 }
 
@@ -1545,6 +1590,61 @@ body.dark .milestone-row strong{color:#fafaf9}
 @media (max-width: 900px) {
   .account-grid{grid-template-columns:1fr}
   .project-timeline{padding:18px 4px}
+}
+
+/* Tablas anchas -> tarjetas en móvil (aplicado primero solo a la Cartera, .card-table) */
+@media (max-width: 720px) {
+  .card-table {
+    min-width: 0;
+  }
+  .card-table thead {
+    display: none;
+  }
+  .card-table, .card-table tbody, .card-table tr, .card-table td {
+    display: block;
+    width: 100%;
+  }
+  .card-table tr {
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 10px 14px;
+    background: var(--surface);
+  }
+  .card-table tr:last-child {
+    margin-bottom: 0;
+  }
+  .card-table td {
+    border-top: none;
+    padding: 6px 0;
+    white-space: normal;
+  }
+  .card-table td[data-label] {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .card-table td[data-label]::before {
+    content: attr(data-label);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    flex: none;
+  }
+  .card-table td.company-cell {
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 6px;
+  }
+  .card-table td.row-actions {
+    padding-top: 10px;
+    text-align: right;
+  }
+  .card-table .empty-cell {
+    padding: 16px 0;
+  }
 }
 
 /* Quick actions FAB */
